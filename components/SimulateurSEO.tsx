@@ -1075,6 +1075,84 @@ export default function SimulateurSEO() {
             </div>
           </div>
 
+          {/* BLOC 7 — PARAMÈTRES (résumé pour le PDF) */}
+          <div style={{ ...card, marginTop: 6 }}>
+            <div style={secTitle}>
+              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Paramètres de simulation
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 28px' }}>
+
+              {/* Colonne gauche : données site + budget */}
+              <div>
+                <div style={{ color: '#5a7a6a', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                  Données du site &amp; Budget
+                </div>
+                {([
+                  ['Domain Authority (DA)', `${da}`],
+                  ['Score Santé Semrush', `${healthScore} → coeff. ${coeffSante}`],
+                  ['Panier moyen / Lead', fmtC(basketValue)],
+                  ['Coût par page', fmtC(costPerPage)],
+                  ['Ratio budget alloué', `${budgetRatio}%`],
+                  ['Budget total', fmtC(totals.budgetTotal)],
+                  ['Nombre de pages', `${totals.nbPages}`],
+                ] as [string, string][]).map(([label, value]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: `1px solid ${G3}` }}>
+                    <span style={{ color: '#7a9e8e', fontSize: 12 }}>{label}</span>
+                    <span style={{ color: CREAM, fontSize: 12, fontWeight: 600 }}>{value}</span>
+                  </div>
+                ))}
+                {seasonalityEnabled && (
+                  <div style={{ marginTop: 8, padding: '6px 10px', backgroundColor: `${ORANGE}22`, borderRadius: 5, display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: ORANGE, fontSize: 11 }}>Saisonnalité</span>
+                    <span style={{ color: ORANGE, fontSize: 11, fontWeight: 600 }}>
+                      ×{highSeasonMultiplier} · démarrage {MONTH_NAMES[startMonth]}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Colonne droite : taux de conversion */}
+              <div>
+                <div style={{ color: '#5a7a6a', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                  Taux de conversion par intention
+                </div>
+                {([
+                  ['Transactionnel', `${crTransactionnel}%`, INTENT_COLOR[1]],
+                  ['Pré-achat',      `${crPreAchat}%`,       INTENT_COLOR[2]],
+                  ['Intermédiaire',  `${crIntermediaire}%`,  INTENT_COLOR[3]],
+                  ['Informationnel', `${crInformationnel}%`, INTENT_COLOR[4]],
+                ] as [string, string, string][]).map(([label, value, color]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: `1px solid ${G3}` }}>
+                    <span style={{ color: '#7a9e8e', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ display: 'inline-block', width: 8, height: 8, backgroundColor: color, borderRadius: 2 }} />
+                      {label}
+                    </span>
+                    <span style={{ color: CREAM, fontSize: 12, fontWeight: 600 }}>{value}</span>
+                  </div>
+                ))}
+
+                {/* Récap hypothèses */}
+                <div style={{ marginTop: 12, padding: '8px 10px', backgroundColor: G3, borderRadius: 5 }}>
+                  <div style={{ color: '#5a7a6a', fontSize: 10, marginBottom: 4 }}>Hypothèses clés</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px' }}>
+                    {([
+                      ['DA', `${da}`],
+                      ['Coeff. Semrush', coeffSante],
+                      ['Panier', fmtC(basketValue)],
+                      ['Budget', fmtC(totals.budgetTotal)],
+                    ] as [string, string][]).map(([k, v]) => (
+                      <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#7a9e8e', fontSize: 11 }}>{k}</span>
+                        <span style={{ color: ORANGE, fontSize: 11, fontWeight: 700 }}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
