@@ -482,13 +482,37 @@ export default function SimulateurSEO() {
 
   const exportPDF = async () => {
     if (!resultsRef.current) return;
+    const el = resultsRef.current;
+
+    // Expand the scrollable div to its full content height so html2canvas
+    // captures everything, not just the visible viewport portion.
+    const savedOverflow = el.style.overflowY;
+    const savedHeight   = el.style.height;
+    const savedMaxH     = el.style.maxHeight;
+    el.style.overflowY = 'visible';
+    el.style.height    = `${el.scrollHeight}px`;
+    el.style.maxHeight = 'none';
+
+    // Let the browser re-layout before capture
+    await new Promise(r => setTimeout(r, 120));
+
     const html2canvas = (await import('html2canvas')).default;
-    const { jsPDF } = await import('jspdf');
-    const canvas = await html2canvas(resultsRef.current, { scale: 2, backgroundColor: G, useCORS: true });
-    const img = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const { jsPDF }   = await import('jspdf');
+
+    const canvas = await html2canvas(el, {
+      scale: 2, backgroundColor: G, useCORS: true, logging: false,
+    });
+
+    // Restore original styles
+    el.style.overflowY = savedOverflow;
+    el.style.height    = savedHeight;
+    el.style.maxHeight = savedMaxH;
+
+    const img   = canvas.toDataURL('image/png');
+    const pdf   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageW = 210, pageH = 297;
-    const imgH = (canvas.height * pageW) / canvas.width;
+    const imgH  = (canvas.height * pageW) / canvas.width;
+
     let y = 0;
     while (y < imgH) {
       if (y > 0) pdf.addPage();
@@ -830,6 +854,30 @@ export default function SimulateurSEO() {
 
         {/* ── RIGHT PANEL ── */}
         <div ref={resultsRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 24px' }}>
+
+          {/* RAPPORT HEADER — apparaît dans le PDF */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            backgroundColor: G2, borderRadius: 10, padding: '14px 20px',
+            border: `1px solid ${G3}`, marginBottom: 14,
+          }}>
+            <div>
+              <div style={{ color: '#5a7a6a', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 5 }}>
+                Simulation SEO · {new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+              </div>
+              <div style={{ color: CREAM, fontSize: 20, fontWeight: 800, lineHeight: 1.1 }}>
+                {prospectName || 'Prospect'}
+              </div>
+              {(siteUrl || sector) && (
+                <div style={{ color: '#7a9e8e', fontSize: 12, marginTop: 4 }}>
+                  {siteUrl}{siteUrl && sector ? ' · ' : ''}{sector}
+                </div>
+              )}
+            </div>
+            <div style={{ color: ORANGE, fontSize: 28, fontWeight: 800, letterSpacing: '-0.02em' }}>
+              SEO
+            </div>
+          </div>
 
           {/* BLOC 1 — MAIN KPIs */}
           <div style={{ display: 'flex', gap: 14, marginBottom: 14 }}>
