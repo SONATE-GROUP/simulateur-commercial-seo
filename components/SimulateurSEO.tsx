@@ -534,19 +534,19 @@ export default function SimulateurSEO() {
         padding: '0 20px', height: 58, flexShrink: 0,
         display: 'flex', alignItems: 'center', gap: 16, zIndex: 100,
       }}>
-        {/* Logo */}
+        {/* Logo — crop PNG to show only the "Sonate" wordmark (original 1762×990, text at 8–50% height) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <div style={{
-            background: 'white', borderRadius: 6, padding: '0 8px',
-            height: 42, overflow: 'hidden', display: 'flex', alignItems: 'flex-start',
-          }}>
-            {/* crop image to show only the Sonate wordmark (top ~47% of 1762×990 PNG) */}
-            <img
-              src="/logo-sonate.png"
-              alt="Sonate"
-              style={{ height: 90, width: 'auto', display: 'block', marginTop: 2 }}
-            />
-          </div>
+            backgroundImage: 'url(/logo-sonate.png)',
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: '180px auto',  /* scale: 180/1762 = 0.102 → display height 101px */
+            backgroundPosition: '-10px -8px', /* skip ~8px top padding, center on text */
+            backgroundColor: 'white',
+            borderRadius: 6,
+            width: 160,
+            height: 42,
+            flexShrink: 0,
+          }} role="img" aria-label="Sonate" />
           <span style={{
             fontSize: 9, fontWeight: 700, letterSpacing: '0.18em',
             textTransform: 'uppercase', color: ORANGE,
