@@ -548,7 +548,7 @@ export default function SimulateurSEO() {
             position: 'absolute', top: 2, right: 0,
             fontSize: 8, fontWeight: 800, letterSpacing: '0.15em',
             color: ORANGE, lineHeight: 1,
-          }}>SEO</span>
+          }}>Accompagnement SEO/GEO</span>
         </div>
 
         <div style={{ width: 1, height: 40, backgroundColor: '#e0e0e0', flexShrink: 0 }} />
