@@ -638,8 +638,8 @@ export default function SimulateurSEO() {
                 <thead>
                   <tr style={{ color: L_MED }}>
                     <th style={{ padding: '3px 4px 6px 0', textAlign: 'left' }}>Mot clé</th>
-                    <th style={{ padding: '3px 2px 6px', textAlign: 'center', minWidth: 52 }}>Vol.</th>
-                    <th style={{ padding: '3px 2px 6px', textAlign: 'center', minWidth: 36 }}>Diff.</th>
+                    <th style={{ padding: '3px 2px 6px', textAlign: 'center', minWidth: 52 }}>Volume</th>
+                    <th style={{ padding: '3px 2px 6px', textAlign: 'center', minWidth: 36 }}>Difficulté</th>
                     <th style={{ padding: '3px 2px 6px', textAlign: 'center', minWidth: 88 }}>Proximité</th>
                     <th style={{ padding: '3px 2px 6px', textAlign: 'center', minWidth: 100 }}>Intention</th>
                     <th style={{ padding: '3px 0px 6px 2px', textAlign: 'left', minWidth: 72 }}>Sujet</th>
