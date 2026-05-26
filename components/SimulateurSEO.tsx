@@ -76,7 +76,7 @@ const SEASON_PRESETS = {
 };
 
 const INITIAL: SimState = {
-  prospectName: 'Votre Prospect',
+  prospectName: 'Nom de l\'entreprise',
   siteUrl: 'www.exemple.com',
   sector: 'E-commerce Jardin',
   da: 20,
@@ -531,7 +531,7 @@ export default function SimulateurSEO() {
         {/* Prospect fields */}
         <div style={{ display: 'flex', gap: 8, flex: 1 }}>
           {([
-            { key: 'prospectName', placeholder: 'Nom du prospect', value: prospectName },
+            { key: 'prospectName', placeholder: "Nom de l'entreprise", value: prospectName },
             { key: 'siteUrl',      placeholder: 'URL du site',       value: siteUrl },
             { key: 'sector',       placeholder: "Secteur d'activité", value: sector },
           ] as { key: keyof SimState; placeholder: string; value: string }[]).map(({ key, placeholder, value }) => (
@@ -858,7 +858,7 @@ export default function SimulateurSEO() {
                 Simulation SEO · {new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
               </div>
               <div style={{ color: CREAM, fontSize: 20, fontWeight: 800, lineHeight: 1.1 }}>
-                {prospectName || 'Prospect'}
+                {prospectName || "Nom de l'entreprise"}
               </div>
               {(siteUrl || sector) && (
                 <div style={{ color: '#7a9e8e', fontSize: 12, marginTop: 4 }}>
