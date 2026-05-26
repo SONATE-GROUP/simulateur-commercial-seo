@@ -938,25 +938,6 @@ export default function SimulateurSEO() {
             </div>
           </div>
 
-          {/* NOTICE — keyword multiplier */}
-          <div style={{ backgroundColor: `${ORANGE}18`, border: `1px solid ${ORANGE}44`, borderRadius: 8, padding: '10px 14px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
-            <span style={{ color: '#c8a882', flex: 1 }}>
-              ⚠️ Projection basée sur <strong style={{ color: CREAM }}>{keywords.length} expressions clés</strong>. En pratique, l'accompagnement couvre bien plus de mots-clés.
-            </span>
-            <button
-              onClick={() => update({ kwMultiplier: kwMultiplier === 1 ? 4 : 1 })}
-              style={{
-                backgroundColor: kwMultiplier === 4 ? ORANGE : 'transparent',
-                border: `1px solid ${ORANGE}`,
-                borderRadius: 6, padding: '5px 12px',
-                color: kwMultiplier === 4 ? 'white' : ORANGE,
-                fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
-              }}
-            >
-              {kwMultiplier === 4 ? '✓ ×4 actif — 24 mots-clés' : '× Simuler ×4 (24 mots-clés)'}
-            </button>
-          </div>
-
           {/* BLOC 1 — MAIN KPIs */}
           <div style={{ display: 'flex', gap: 14, marginBottom: 14 }}>
             <div style={{
