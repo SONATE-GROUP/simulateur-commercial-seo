@@ -535,27 +535,23 @@ export default function SimulateurSEO() {
         display: 'flex', alignItems: 'center', gap: 16, zIndex: 100,
       }}>
         {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <div style={{
+            background: 'white', borderRadius: 6, padding: '0 8px',
+            height: 42, overflow: 'hidden', display: 'flex', alignItems: 'flex-start',
+          }}>
+            {/* crop image to show only the Sonate wordmark (top ~47% of 1762×990 PNG) */}
+            <img
+              src="/logo-sonate.png"
+              alt="Sonate"
+              style={{ height: 90, width: 'auto', display: 'block', marginTop: 2 }}
+            />
+          </div>
           <span style={{
-            fontFamily: "'Playfair Display', Georgia, serif",
-            fontWeight: 900,
-            fontSize: 26,
-            color: '#f0ebe1',
-            letterSpacing: '-0.5px',
-            lineHeight: 1,
-          }}>Sonate</span>
-          <span style={{
-            fontSize: 9,
-            fontWeight: 700,
-            letterSpacing: '0.18em',
-            textTransform: 'uppercase',
-            color: ORANGE,
-            border: `1px solid ${ORANGE}`,
-            borderRadius: 3,
-            padding: '2px 5px',
-            lineHeight: 1,
-            alignSelf: 'center',
-            marginTop: 2,
+            fontSize: 9, fontWeight: 700, letterSpacing: '0.18em',
+            textTransform: 'uppercase', color: ORANGE,
+            border: `1px solid ${ORANGE}`, borderRadius: 3,
+            padding: '2px 5px', lineHeight: 1,
           }}>SEO</span>
         </div>
 
