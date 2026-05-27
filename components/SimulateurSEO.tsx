@@ -978,7 +978,7 @@ export default function SimulateurSEO() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
             <KPICard label="Trafic organique / mois" value={fmtN(totals.totalTraffic)} />
             <KPICard label="Leads / mois (à 12 mois)" value={totals.totalLeads.toFixed(1)} />
-            <KPICard label="Pages à créer" value={`${totals.nbPages}`} />
+            <KPICard label="Sujets clés à traiter" value={`${totals.nbPages}`} />
             <KPICard label="Budget mensuel" value={fmtC(totals.budgetMensuel)} accent />
           </div>
 
