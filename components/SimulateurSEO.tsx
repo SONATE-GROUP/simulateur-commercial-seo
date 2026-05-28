@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useRef, useEffect, CSSProperties } from 'react';
+import * as XLSX from 'xlsx';
 import {
   ComposedChart, BarChart, Bar, Line, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, Legend,
@@ -332,7 +333,8 @@ export default function SimulateurSEO() {
   const [state, setState] = useState<SimState>(INITIAL);
   const [linkCopied, setLinkCopied] = useState(false);
   const [openCats, setOpenCats] = useState<Set<string>>(new Set(['cat1', 'cat2']));
-  const resultsRef = useRef<HTMLDivElement>(null);
+  const resultsRef  = useRef<HTMLDivElement>(null);
+  const xlsxInputRef = useRef<HTMLInputElement>(null);
 
   const toggleCat = (id: string) => setOpenCats(prev => {
     const next = new Set(prev);
@@ -469,6 +471,81 @@ export default function SimulateurSEO() {
   }));
 
   const removeKw = (id: string) => setState(s => ({ ...s, keywords: s.keywords.filter(k => k.id !== id) }));
+
+  /* ── EXCEL IMPORT ─────────────────────────────────────────── */
+  const INTENT_MAP: Record<string, Intention> = {
+    transactionnel: 1, '1': 1,
+    'pré-achat': 2, 'pre-achat': 2, preachat: 2, '2': 2,
+    intermédiaire: 3, intermediaire: 3, '3': 3,
+    informationnel: 4, '4': 4,
+  };
+  const normalize = (s: string) =>
+    s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+
+  const importExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const wb  = XLSX.read(ev.target?.result, { type: 'array' });
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+      if (!raw.length) return;
+
+      // Map header keys → normalized
+      const headerMap: Record<string, string> = {};
+      Object.keys(raw[0]).forEach(h => { headerMap[normalize(h)] = h; });
+
+      const col = (row: Record<string, unknown>, ...aliases: string[]) => {
+        for (const a of aliases) {
+          const key = headerMap[a];
+          if (key !== undefined) return String(row[key] ?? '');
+        }
+        return '';
+      };
+
+      const catId   = uid();
+      const catName = file.name.replace(/\.[^.]+$/, '');
+      const newKws: Keyword[] = raw.map(row => {
+        const intentRaw = normalize(col(row, 'intention', 'intent'));
+        const proximityRaw = Number(col(row, 'proximite', 'proximity', 'prox')) || 1;
+        return {
+          id:         uid(),
+          keyword:    col(row, 'mot cle', 'mot-cle', 'keyword', 'kw', 'requete', 'requête'),
+          volume:     Math.max(0, Number(col(row, 'volume', 'vol', 'volume mensuel')) || 0),
+          difficulty: Math.min(100, Math.max(0, Number(col(row, 'difficulte', 'difficulty', 'diff', 'kd')) || 30)),
+          proximity:  (Math.min(3, Math.max(1, proximityRaw)) as Proximity),
+          intention:  (INTENT_MAP[intentRaw] ?? 1) as Intention,
+          topic:      col(row, 'sujet', 'topic', 'theme', 'thème'),
+          categoryId: catId,
+        };
+      }).filter(k => k.keyword);
+
+      if (!newKws.length) return;
+      setState(s => ({
+        ...s,
+        categories: [...s.categories, { id: catId, name: catName }],
+        keywords:   [...s.keywords, ...newKws],
+      }));
+      setOpenCats(prev => { const n = new Set(prev); n.add(catId); return n; });
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const downloadTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Mot clé', 'Volume', 'Difficulté', 'Proximité', 'Intention', 'Sujet'],
+      ['acheter graines tomates', 2400, 35, 1, 1, 'Graines tomates'],
+      ['meilleures graines potager', 1800, 42, 2, 2, 'Graines potager'],
+      ['comment semer des fleurs', 5400, 25, 3, 4, 'Guide semis'],
+    ]);
+    ws['!cols'] = [{ wch: 28 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Mots clés');
+    XLSX.writeFile(wb, 'template-mots-cles.xlsx');
+  };
 
   const addCategory = () => {
     const id = uid();
@@ -686,9 +763,18 @@ export default function SimulateurSEO() {
           <div style={{ ...cardLight, padding: '14px 12px' }}>
             <div style={{ ...secTitleLight, marginBottom: 12 }}>
               <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Mots clés
-              <button onClick={addCategory} style={{ marginLeft: 'auto', backgroundColor: 'transparent', border: `1px solid ${ORANGE}`, borderRadius: 4, padding: '3px 10px', color: ORANGE, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
-                + Catégorie
-              </button>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                <button onClick={downloadTemplate} style={{ backgroundColor: 'transparent', border: `1px solid ${L_BORD}`, borderRadius: 4, padding: '3px 10px', color: L_MED, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                  ↓ Modèle
+                </button>
+                <button onClick={() => xlsxInputRef.current?.click()} style={{ backgroundColor: 'transparent', border: `1px solid ${ORANGE}`, borderRadius: 4, padding: '3px 10px', color: ORANGE, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                  ↑ Importer Excel
+                </button>
+                <button onClick={addCategory} style={{ backgroundColor: 'transparent', border: `1px solid ${ORANGE}`, borderRadius: 4, padding: '3px 10px', color: ORANGE, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                  + Catégorie
+                </button>
+              </div>
+              <input ref={xlsxInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={importExcel} style={{ display: 'none' }} />
             </div>
 
             {categories.map((cat, catIdx) => {
