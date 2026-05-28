@@ -441,7 +441,7 @@ export default function SimulateurSEO() {
       const stats       = catStats[kw.categoryId] ?? { budget: 700, nbKws: 1 };
       const nbKws       = Math.max(1, stats.nbKws);
       const budgetPerKw = stats.budget / nbKws;
-      const coeffBudget = Math.max(0.1, budgetPerKw / 700);
+      const coeffBudget = (budgetPerKw / 500) ** 2;
       // More keywords in the category strengthen all positions in it
       const denom  = da * coeffSante * coeffBudget + CAT_KW_COEF * nbKws;
       const posRaw = denom > 0 ? (kw.difficulty * kw.difficulty / 10 * kw.proximity) / denom : 100;
@@ -1066,7 +1066,7 @@ export default function SimulateurSEO() {
                 {categories.map(cat => {
                   const nb  = keywords.filter(k => k.categoryId === cat.id).length;
                   const bpk = nb > 0 ? (cat.budget ?? 700) / nb : (cat.budget ?? 700);
-                  const coeff = Math.max(0.1, bpk / 700);
+                  const coeff = (bpk / 500) ** 2;
                   return (
                     <div key={cat.id}>
                       <Slider
