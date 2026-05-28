@@ -451,12 +451,6 @@ export default function SimulateurSEO() {
         const calMonth = (startMonth + i) % 12;
         return highSeasonMonths[calMonth] ? highSeasonMultiplier : 1;
       });
-      // Normalize so the weighted sum of ramp-up × weights equals the base sum (totalCA × 6.5)
-      // Base: Σ m/12 for m=1..12 = 6.5
-      // Weighted raw: Σ (m/12) × weights[m-1]
-      const rawWeightedSum = weights.reduce((s, w, i) => s + w * (i + 1) / 12, 0);
-      const normFactor = rawWeightedSum > 0 ? 6.5 / rawWeightedSum : 1;
-      weights = weights.map(w => w * normFactor);
     } else {
       weights = Array(12).fill(1);
     }
