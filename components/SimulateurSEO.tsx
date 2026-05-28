@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useRef, useEffect, CSSProperties } from 'react';
+import * as XLSX from 'xlsx';
 import {
   ComposedChart, BarChart, Bar, Line, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, Legend,
@@ -330,9 +331,11 @@ const RAMP_UP_DATA = [
 
 export default function SimulateurSEO() {
   const [state, setState] = useState<SimState>(INITIAL);
-  const [linkCopied, setLinkCopied] = useState(false);
+  const [linkCopied, setLinkCopied]   = useState(false);
+  const [reportId, setReportId]       = useState<string | null>(null);
   const [openCats, setOpenCats] = useState<Set<string>>(new Set(['cat1', 'cat2']));
-  const resultsRef = useRef<HTMLDivElement>(null);
+  const resultsRef  = useRef<HTMLDivElement>(null);
+  const xlsxInputRef = useRef<HTMLInputElement>(null);
 
   const toggleCat = (id: string) => setOpenCats(prev => {
     const next = new Set(prev);
@@ -360,6 +363,7 @@ export default function SimulateurSEO() {
     if (data) {
       try { setState(decodeState(data)); } catch { /* ignore */ }
     } else if (report) {
+      setReportId(report);
       fetch(`/api/reports/${report}`)
         .then(r => r.json())
         .then(({ stateB64 }) => { if (stateB64) setState(decodeState(stateB64)); })
@@ -470,6 +474,81 @@ export default function SimulateurSEO() {
 
   const removeKw = (id: string) => setState(s => ({ ...s, keywords: s.keywords.filter(k => k.id !== id) }));
 
+  /* ── EXCEL IMPORT ─────────────────────────────────────────── */
+  const INTENT_MAP: Record<string, Intention> = {
+    transactionnel: 1, '1': 1,
+    'pré-achat': 2, 'pre-achat': 2, preachat: 2, '2': 2,
+    intermédiaire: 3, intermediaire: 3, '3': 3,
+    informationnel: 4, '4': 4,
+  };
+  const normalize = (s: string) =>
+    s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+
+  const importExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const wb  = XLSX.read(ev.target?.result, { type: 'array' });
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+      if (!raw.length) return;
+
+      // Map header keys → normalized
+      const headerMap: Record<string, string> = {};
+      Object.keys(raw[0]).forEach(h => { headerMap[normalize(h)] = h; });
+
+      const col = (row: Record<string, unknown>, ...aliases: string[]) => {
+        for (const a of aliases) {
+          const key = headerMap[a];
+          if (key !== undefined) return String(row[key] ?? '');
+        }
+        return '';
+      };
+
+      const catId   = uid();
+      const catName = file.name.replace(/\.[^.]+$/, '');
+      const newKws: Keyword[] = raw.map(row => {
+        const intentRaw = normalize(col(row, 'intention', 'intent'));
+        const proximityRaw = Number(col(row, 'proximite', 'proximity', 'prox')) || 1;
+        return {
+          id:         uid(),
+          keyword:    col(row, 'mot cle', 'mot-cle', 'keyword', 'kw', 'requete', 'requête'),
+          volume:     Math.max(0, Number(col(row, 'volume', 'vol', 'volume mensuel')) || 0),
+          difficulty: Math.min(100, Math.max(0, Number(col(row, 'difficulte', 'difficulty', 'diff', 'kd')) || 30)),
+          proximity:  (Math.min(3, Math.max(1, proximityRaw)) as Proximity),
+          intention:  (INTENT_MAP[intentRaw] ?? 1) as Intention,
+          topic:      col(row, 'sujet', 'topic', 'theme', 'thème'),
+          categoryId: catId,
+        };
+      }).filter(k => k.keyword);
+
+      if (!newKws.length) return;
+      setState(s => ({
+        ...s,
+        categories: [...s.categories, { id: catId, name: catName }],
+        keywords:   [...s.keywords, ...newKws],
+      }));
+      setOpenCats(prev => { const n = new Set(prev); n.add(catId); return n; });
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const downloadTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Mot clé', 'Volume', 'Difficulté', 'Proximité', 'Intention', 'Sujet'],
+      ['acheter graines tomates', 2400, 35, 1, 1, 'Graines tomates'],
+      ['meilleures graines potager', 1800, 42, 2, 2, 'Graines potager'],
+      ['comment semer des fleurs', 5400, 25, 3, 4, 'Guide semis'],
+    ]);
+    ws['!cols'] = [{ wch: 28 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Mots clés');
+    XLSX.writeFile(wb, 'template-mots-cles.xlsx');
+  };
+
   const addCategory = () => {
     const id = uid();
     setState(s => ({ ...s, categories: [...s.categories, { id, name: 'Nouvelle catégorie' }] }));
@@ -496,27 +575,32 @@ export default function SimulateurSEO() {
 
   const genLink = async () => {
     const stateB64 = encodeState(state);
-    const url = `${location.origin}${location.pathname}?data=${stateB64}`;
-    navigator.clipboard.writeText(url);
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2500);
 
-    // Save to Turso
-    const id = uid();
     try {
-      await fetch('/api/reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id,
-          prospect: state.prospectName,
-          siteUrl:  state.siteUrl,
-          sector:   state.sector,
-          stateB64,
-        }),
-      });
+      if (reportId) {
+        // Update existing report
+        await fetch(`/api/reports/${reportId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prospect: state.prospectName, siteUrl: state.siteUrl, sector: state.sector, stateB64 }),
+        });
+        navigator.clipboard.writeText(`${location.origin}${location.pathname}?report=${reportId}`);
+      } else {
+        // Create new report
+        const id = uid();
+        await fetch('/api/reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, prospect: state.prospectName, siteUrl: state.siteUrl, sector: state.sector, stateB64 }),
+        });
+        setReportId(id);
+        navigator.clipboard.writeText(`${location.origin}${location.pathname}?report=${id}`);
+      }
     } catch (err) {
       console.warn('[genLink] Sauvegarde DB échouée', err);
+      navigator.clipboard.writeText(`${location.origin}${location.pathname}?data=${stateB64}`);
     }
   };
 
@@ -524,29 +608,48 @@ export default function SimulateurSEO() {
     if (!resultsRef.current) return;
     const el = resultsRef.current;
 
-    // Expand the scrollable div to its full content height so html2canvas
-    // captures everything, not just the visible viewport portion.
-    const savedOverflow = el.style.overflowY;
-    const savedHeight   = el.style.height;
-    const savedMaxH     = el.style.maxHeight;
-    el.style.overflowY = 'visible';
-    el.style.height    = `${el.scrollHeight}px`;
-    el.style.maxHeight = 'none';
+    // Expand every scrollable container (outer + all nested) before capture
+    type Snapshot = { el: HTMLElement; overflowY: string; overflowX: string; height: string; maxHeight: string; width: string };
+    const snapshots: Snapshot[] = [];
 
-    // Let the browser re-layout before capture
-    await new Promise(r => setTimeout(r, 120));
+    [el, ...Array.from(el.querySelectorAll<HTMLElement>('*'))].forEach(node => {
+      const cs = getComputedStyle(node);
+      const needsY = ['auto', 'scroll'].includes(cs.overflowY);
+      const needsX = ['auto', 'scroll'].includes(cs.overflowX);
+      if (needsY || needsX) {
+        snapshots.push({
+          el: node,
+          overflowY: node.style.overflowY,
+          overflowX: node.style.overflowX,
+          height:    node.style.height,
+          maxHeight: node.style.maxHeight,
+          width:     node.style.width,
+        });
+        node.style.overflowY = 'visible';
+        node.style.overflowX = 'visible';
+        if (needsY) { node.style.height = `${node.scrollHeight}px`; node.style.maxHeight = 'none'; }
+        if (needsX) { node.style.width  = `${node.scrollWidth}px`; }
+      }
+    });
+
+    await new Promise(r => setTimeout(r, 150));
 
     const html2canvas = (await import('html2canvas')).default;
     const { jsPDF }   = await import('jspdf');
 
     const canvas = await html2canvas(el, {
       scale: 2, backgroundColor: G, useCORS: true, logging: false,
+      width: el.scrollWidth, windowWidth: el.scrollWidth,
     });
 
-    // Restore original styles
-    el.style.overflowY = savedOverflow;
-    el.style.height    = savedHeight;
-    el.style.maxHeight = savedMaxH;
+    // Restore
+    snapshots.forEach(s => {
+      s.el.style.overflowY = s.overflowY;
+      s.el.style.overflowX = s.overflowX;
+      s.el.style.height    = s.height;
+      s.el.style.maxHeight = s.maxHeight;
+      s.el.style.width     = s.width;
+    });
 
     const img   = canvas.toDataURL('image/png');
     const pdf   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -620,7 +723,7 @@ export default function SimulateurSEO() {
               fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap', transition: 'border-color .15s',
             }}
           >
-            {linkCopied ? '✓ Copié !' : '🔗 Générer lien'}
+            {linkCopied ? '✓ Enregistré !' : reportId ? '💾 Sauvegarder' : '🔗 Générer lien'}
           </button>
           <a
             href="/rapports"
@@ -686,9 +789,18 @@ export default function SimulateurSEO() {
           <div style={{ ...cardLight, padding: '14px 12px' }}>
             <div style={{ ...secTitleLight, marginBottom: 12 }}>
               <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Mots clés
-              <button onClick={addCategory} style={{ marginLeft: 'auto', backgroundColor: 'transparent', border: `1px solid ${ORANGE}`, borderRadius: 4, padding: '3px 10px', color: ORANGE, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
-                + Catégorie
-              </button>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                <button onClick={downloadTemplate} style={{ backgroundColor: 'transparent', border: `1px solid ${L_BORD}`, borderRadius: 4, padding: '3px 10px', color: L_MED, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                  ↓ Modèle
+                </button>
+                <button onClick={() => xlsxInputRef.current?.click()} style={{ backgroundColor: 'transparent', border: `1px solid ${ORANGE}`, borderRadius: 4, padding: '3px 10px', color: ORANGE, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                  ↑ Importer Excel
+                </button>
+                <button onClick={addCategory} style={{ backgroundColor: 'transparent', border: `1px solid ${ORANGE}`, borderRadius: 4, padding: '3px 10px', color: ORANGE, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                  + Catégorie
+                </button>
+              </div>
+              <input ref={xlsxInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={importExcel} style={{ display: 'none' }} />
             </div>
 
             {categories.map((cat, catIdx) => {
@@ -1216,16 +1328,23 @@ export default function SimulateurSEO() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${G3}` }}>
-                    {['Mot clé / Sujet', 'Position', 'CTR', 'Trafic / mois', 'Leads / mois', 'CA / mois', 'Intention'].map((h, i) => (
-                      <th key={h} style={{
+                    {[
+                      { label: 'Mot clé / Sujet', align: 'left'   },
+                      { label: 'Volume',           align: 'right'  },
+                      { label: 'Diff.',            align: 'center' },
+                      { label: 'Position',         align: 'center' },
+                      { label: 'CTR',              align: 'center' },
+                      { label: 'Trafic / mois',    align: 'right'  },
+                      { label: 'Leads / mois',     align: 'right'  },
+                      { label: 'CA / mois',        align: 'right'  },
+                      { label: 'Intention',        align: 'center' },
+                    ].map(({ label, align }) => (
+                      <th key={label} style={{
                         padding: '6px 8px',
-                        textAlign: i === 0 ? 'left' : i >= 3 && i <= 5 ? 'right' : 'center',
-                        color: '#5a7a6a',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.06em',
-                        fontSize: 10,
-                      }}>{h}</th>
+                        textAlign: align as 'left' | 'right' | 'center',
+                        color: '#5a7a6a', fontWeight: 600,
+                        textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: 10,
+                      }}>{label}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1236,6 +1355,8 @@ export default function SimulateurSEO() {
                         <div style={{ color: CREAM, fontWeight: 500 }}>{kw.keyword || <em style={{ color: '#5a7a6a' }}>—</em>}</div>
                         {kw.topic && <div style={{ color: '#7a9e8e', fontSize: 10, marginTop: 2 }}>{kw.topic}</div>}
                       </td>
+                      <td style={{ padding: '8px', textAlign: 'right', color: '#a8c5b5' }}>{fmtN(kw.volume)}</td>
+                      <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>{kw.difficulty}</td>
                       <td style={{ padding: '8px', textAlign: 'center' }}>
                         <span style={{
                           backgroundColor: kw.pos <= 3 ? ORANGE : kw.pos <= 6 ? '#2d7a5e' : G3,
@@ -1269,6 +1390,8 @@ export default function SimulateurSEO() {
                 <tfoot>
                   <tr style={{ borderTop: `2px solid ${G3}` }}>
                     <td style={{ padding: '10px 8px', color: CREAM, fontWeight: 700 }}>Total</td>
+                    <td></td>
+                    <td></td>
                     <td></td>
                     <td></td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: CREAM, fontWeight: 700 }}>{fmtN(totals.totalTraffic)}</td>
