@@ -608,29 +608,48 @@ export default function SimulateurSEO() {
     if (!resultsRef.current) return;
     const el = resultsRef.current;
 
-    // Expand the scrollable div to its full content height so html2canvas
-    // captures everything, not just the visible viewport portion.
-    const savedOverflow = el.style.overflowY;
-    const savedHeight   = el.style.height;
-    const savedMaxH     = el.style.maxHeight;
-    el.style.overflowY = 'visible';
-    el.style.height    = `${el.scrollHeight}px`;
-    el.style.maxHeight = 'none';
+    // Expand every scrollable container (outer + all nested) before capture
+    type Snapshot = { el: HTMLElement; overflowY: string; overflowX: string; height: string; maxHeight: string; width: string };
+    const snapshots: Snapshot[] = [];
 
-    // Let the browser re-layout before capture
-    await new Promise(r => setTimeout(r, 120));
+    [el, ...Array.from(el.querySelectorAll<HTMLElement>('*'))].forEach(node => {
+      const cs = getComputedStyle(node);
+      const needsY = ['auto', 'scroll'].includes(cs.overflowY);
+      const needsX = ['auto', 'scroll'].includes(cs.overflowX);
+      if (needsY || needsX) {
+        snapshots.push({
+          el: node,
+          overflowY: node.style.overflowY,
+          overflowX: node.style.overflowX,
+          height:    node.style.height,
+          maxHeight: node.style.maxHeight,
+          width:     node.style.width,
+        });
+        node.style.overflowY = 'visible';
+        node.style.overflowX = 'visible';
+        if (needsY) { node.style.height = `${node.scrollHeight}px`; node.style.maxHeight = 'none'; }
+        if (needsX) { node.style.width  = `${node.scrollWidth}px`; }
+      }
+    });
+
+    await new Promise(r => setTimeout(r, 150));
 
     const html2canvas = (await import('html2canvas')).default;
     const { jsPDF }   = await import('jspdf');
 
     const canvas = await html2canvas(el, {
       scale: 2, backgroundColor: G, useCORS: true, logging: false,
+      width: el.scrollWidth, windowWidth: el.scrollWidth,
     });
 
-    // Restore original styles
-    el.style.overflowY = savedOverflow;
-    el.style.height    = savedHeight;
-    el.style.maxHeight = savedMaxH;
+    // Restore
+    snapshots.forEach(s => {
+      s.el.style.overflowY = s.overflowY;
+      s.el.style.overflowX = s.overflowX;
+      s.el.style.height    = s.height;
+      s.el.style.maxHeight = s.maxHeight;
+      s.el.style.width     = s.width;
+    });
 
     const img   = canvas.toDataURL('image/png');
     const pdf   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -1309,16 +1328,23 @@ export default function SimulateurSEO() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${G3}` }}>
-                    {['Mot clé / Sujet', 'Position', 'CTR', 'Trafic / mois', 'Leads / mois', 'CA / mois', 'Intention'].map((h, i) => (
-                      <th key={h} style={{
+                    {[
+                      { label: 'Mot clé / Sujet', align: 'left'   },
+                      { label: 'Volume',           align: 'right'  },
+                      { label: 'Diff.',            align: 'center' },
+                      { label: 'Position',         align: 'center' },
+                      { label: 'CTR',              align: 'center' },
+                      { label: 'Trafic / mois',    align: 'right'  },
+                      { label: 'Leads / mois',     align: 'right'  },
+                      { label: 'CA / mois',        align: 'right'  },
+                      { label: 'Intention',        align: 'center' },
+                    ].map(({ label, align }) => (
+                      <th key={label} style={{
                         padding: '6px 8px',
-                        textAlign: i === 0 ? 'left' : i >= 3 && i <= 5 ? 'right' : 'center',
-                        color: '#5a7a6a',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.06em',
-                        fontSize: 10,
-                      }}>{h}</th>
+                        textAlign: align as 'left' | 'right' | 'center',
+                        color: '#5a7a6a', fontWeight: 600,
+                        textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: 10,
+                      }}>{label}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1329,6 +1355,8 @@ export default function SimulateurSEO() {
                         <div style={{ color: CREAM, fontWeight: 500 }}>{kw.keyword || <em style={{ color: '#5a7a6a' }}>—</em>}</div>
                         {kw.topic && <div style={{ color: '#7a9e8e', fontSize: 10, marginTop: 2 }}>{kw.topic}</div>}
                       </td>
+                      <td style={{ padding: '8px', textAlign: 'right', color: '#a8c5b5' }}>{fmtN(kw.volume)}</td>
+                      <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>{kw.difficulty}</td>
                       <td style={{ padding: '8px', textAlign: 'center' }}>
                         <span style={{
                           backgroundColor: kw.pos <= 3 ? ORANGE : kw.pos <= 6 ? '#2d7a5e' : G3,
@@ -1362,6 +1390,8 @@ export default function SimulateurSEO() {
                 <tfoot>
                   <tr style={{ borderTop: `2px solid ${G3}` }}>
                     <td style={{ padding: '10px 8px', color: CREAM, fontWeight: 700 }}>Total</td>
+                    <td></td>
+                    <td></td>
                     <td></td>
                     <td></td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: CREAM, fontWeight: 700 }}>{fmtN(totals.totalTraffic)}</td>
