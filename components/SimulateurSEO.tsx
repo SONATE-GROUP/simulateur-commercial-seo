@@ -1436,7 +1436,7 @@ export default function SimulateurSEO() {
           {/* BLOC 2 — SECONDARY KPIs */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
             <KPICard label="Trafic organique / mois" value={fmtN(totals.totalTraffic)} />
-            <KPICard label="Leads / mois (à 12 mois)" value={totals.totalLeads.toFixed(1)} />
+            <KPICard label="Leads / mois (à 12 mois)" value={`${Math.round(totals.totalLeads)}`} />
             <KPICard label="Sujets clés à traiter" value={`${totals.nbPages}`} />
             <KPICard label="Budget mensuel" value={fmtC(totals.budgetMensuel)} accent />
           </div>
@@ -1465,9 +1465,9 @@ export default function SimulateurSEO() {
                     stages={[
                       { label: 'Impressions',   value: fmtN(imp),               active: true },
                       { label: 'Clics',          value: fmtN(traf),              active: true },
-                      { label: 'Leads',          value: baseLeads.toFixed(1),    active: true },
-                      { label: 'Prise de RDV',   value: baseRdv.toFixed(1),      active: true },
-                      { label: 'Closing',        value: baseClosing.toFixed(1),  active: true },
+                      { label: 'Leads',          value: `${Math.round(baseLeads)}`,    active: true },
+                      { label: 'Prise de RDV',   value: `${Math.round(baseRdv)}`,      active: true },
+                      { label: 'Closing',        value: `${Math.round(baseClosing)}`,  active: true },
                       { label: 'CA / mois',      value: fmtC(totalCA),           active: true },
                     ]}
                     rates={[
@@ -1485,7 +1485,7 @@ export default function SimulateurSEO() {
                   stages={[
                     { label: 'Impressions',  value: fmtN(imp),            active: true },
                     { label: 'Clics',        value: fmtN(traf),           active: true },
-                    { label: 'Transactions', value: baseLeads.toFixed(1), active: true },
+                    { label: 'Transactions', value: `${Math.round(baseLeads)}`, active: true },
                     { label: 'CA / mois',    value: fmtC(totalCA),        active: true },
                   ]}
                   rates={[
@@ -1708,7 +1708,7 @@ export default function SimulateurSEO() {
                     <td></td>
                     <td></td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: CREAM, fontWeight: 700 }}>{fmtN(totals.totalTraffic)}</td>
-                    <td style={{ padding: '10px 8px', textAlign: 'right', color: CREAM, fontWeight: 700 }}>{totals.totalLeads.toFixed(2)}</td>
+                    <td style={{ padding: '10px 8px', textAlign: 'right', color: CREAM, fontWeight: 700 }}>{Math.round(totals.totalLeads)}</td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: ORANGE, fontWeight: 800, fontSize: 14 }}>{fmtC(totals.totalCA)}</td>
                     <td></td>
                   </tr>
