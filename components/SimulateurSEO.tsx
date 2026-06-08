@@ -438,13 +438,15 @@ export default function SimulateurSEO() {
       if (catStats[kw.categoryId]) catStats[kw.categoryId].nbKws++;
     });
 
+    // proximity: 1=exact(×1.0), 2=très proche(×1.5), 3=thématique(×3.0)
+    const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
     return keywords.map(kw => {
       const stats       = catStats[kw.categoryId] ?? { budget: 700, nbKws: 1 };
       const nbKws       = Math.max(1, stats.nbKws);
       const budgetPerKw = stats.budget / nbKws;
       const logBudget   = Math.log(1 + Math.max(0, budgetPerKw) / 20);
       const denom       = 225 * da * (coeffSante / 70) * Math.sqrt(nbKws) * logBudget;
-      const posRaw      = denom > 0 ? (Math.pow(kw.difficulty, 1.9) * kw.proximity ** 2) / denom : 100;
+      const posRaw      = denom > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / denom : 100;
       const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
       const baseCtr = CTR_TABLE[pos] ?? 0;
       const ctr    = baseCtr * (budgetRatio / 100);
@@ -498,14 +500,22 @@ export default function SimulateurSEO() {
 
     // Use the ramp-up curve (same as the histogram) to distribute monthly CA & leads
     const { totalLeads } = totals;
+    // Closed clients per month at full maturity (fractional)
+    const closedLeadsAtMaturity = basketValue > 0 ? totalCA / basketValue : 0;
+    // Accumulate fractional clients to assign whole-client CA in the right months
+    let cumulativeClients = 0;
+    let intClientsSoFar = 0;
     let bev = -1;
     const data = Array.from({ length: 12 }, (_, i) => {
       const m = i + 1;
       const calMonth = (startMonth + i) % 12;
       const label = seasonalityEnabled ? MONTH_NAMES[calMonth] : `M${m}`;
       const rampPct = RAMP_UP_DATA[i].pct / 100;
-      const ca = totalCA * rampPct * weights[i];
       const leads = totalLeads * rampPct * weights[i];
+      cumulativeClients += closedLeadsAtMaturity * rampPct * weights[i];
+      const newIntClients = Math.floor(cumulativeClients) - intClientsSoFar;
+      intClientsSoFar = Math.floor(cumulativeClients);
+      const ca = newIntClients * basketValue;
       // Break-even = first month where monthly CA covers monthly budget cost
       if (bev === -1 && ca >= monthlyBudget) bev = m;
       const cplMonth = leads > 0.5 ? Math.round(monthlyBudget / leads) : null;
@@ -515,7 +525,7 @@ export default function SimulateurSEO() {
       ? (seasonalityEnabled ? MONTH_NAMES[(startMonth + bev - 1) % 12] : `M${bev}`)
       : null;
     return { monthlyData: data, breakEvenMonth: bevLabel };
-  }, [totals, seasonalityEnabled, startMonth, highSeasonMonths, highSeasonMultiplier]);
+  }, [totals, basketValue, seasonalityEnabled, startMonth, highSeasonMonths, highSeasonMultiplier]);
 
   /* CPL */
   const cpl = useMemo(() => {
