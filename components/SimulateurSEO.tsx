@@ -450,10 +450,11 @@ export default function SimulateurSEO() {
       const ctr    = baseCtr * (budgetRatio / 100);
       const traffic = kw.volume * ctr;
       const leads  = traffic * (cr[kw.intention as Intention] / 100);
-      const ca     = leads * basketValue;
+      const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
+      const ca     = leads * basketValue * leadConv;
       return { ...kw, pos, ctr, traffic, leads, ca };
     });
-  }, [keywords, categories, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio]);
+  }, [keywords, categories, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing]);
 
   /* Totals */
   const totals = useMemo(() => {
