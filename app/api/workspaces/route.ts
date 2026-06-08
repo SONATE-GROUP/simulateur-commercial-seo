@@ -12,31 +12,31 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
   await initDb();
 
-  let rows;
   if (session.user.isGlobalAdmin) {
     const res = await db.execute('SELECT id, name, owner_id, created_at FROM workspaces ORDER BY created_at DESC');
-    rows = res.rows;
-  } else {
-    const res = await db.execute({
-      sql: `SELECT w.id, w.name, w.owner_id, w.created_at
-            FROM workspaces w
-            JOIN workspace_members wm ON wm.workspace_id = w.id
-            WHERE wm.user_id = ?
-            ORDER BY w.created_at DESC`,
-      args: [session.user.id],
-    });
-    rows = res.rows;
+    return NextResponse.json(res.rows.map(r => ({
+      id: r[0], name: r[1], ownerId: r[2], createdAt: r[3], role: 'owner',
+    })));
   }
 
-  return NextResponse.json(rows.map(r => ({
-    id: r[0], name: r[1], ownerId: r[2], createdAt: r[3],
+  const res = await db.execute({
+    sql: `SELECT w.id, w.name, w.owner_id, w.created_at, wm.role
+          FROM workspaces w
+          JOIN workspace_members wm ON wm.workspace_id = w.id
+          WHERE wm.user_id = ?
+          ORDER BY w.created_at DESC`,
+    args: [session.user.id],
+  });
+  return NextResponse.json(res.rows.map(r => ({
+    id: r[0], name: r[1], ownerId: r[2], createdAt: r[3], role: r[4],
   })));
 }
 
-/* POST /api/workspaces — create a workspace */
+/* POST /api/workspaces — create a workspace (global admins only) */
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+  if (!session.user.isGlobalAdmin) return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
   await initDb();
 
   const { name } = await req.json();
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
   const id  = uid();
   const now = new Date().toISOString();
   await db.execute({ sql: 'INSERT INTO workspaces (id, name, owner_id, created_at) VALUES (?, ?, ?, ?)', args: [id, name.trim(), session.user.id, now] });
-  await db.execute({ sql: 'INSERT INTO workspace_members (user_id, workspace_id, role) VALUES (?, ?, ?)', args: [session.user.id, id, 'admin'] });
+  await db.execute({ sql: 'INSERT INTO workspace_members (user_id, workspace_id, role) VALUES (?, ?, ?)', args: [session.user.id, id, 'owner'] });
 
-  return NextResponse.json({ id, name: name.trim(), ownerId: session.user.id, createdAt: now });
+  return NextResponse.json({ id, name: name.trim(), ownerId: session.user.id, createdAt: now, role: 'owner' });
 }
