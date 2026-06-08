@@ -366,7 +366,7 @@ export default function SimulateurSEO() {
   const [linkCopied, setLinkCopied]   = useState(false);
   const [reportId, setReportId]       = useState<string | null>(null);
   const [openCats, setOpenCats] = useState<Set<string>>(new Set(['cat1', 'cat2']));
-  const [workspaces, setWorkspaces]   = useState<{ id: string; name: string }[]>([]);
+  const [workspaces, setWorkspaces]   = useState<{ id: string; name: string; role: string }[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>('');
   const resultsRef  = useRef<HTMLDivElement>(null);
   const xlsxInputRef = useRef<HTMLInputElement>(null);
@@ -409,16 +409,18 @@ export default function SimulateurSEO() {
     }
   }, []);
 
-  /* Load workspaces for the current user */
+  /* Load workspaces — redirect readers to /rapports */
   useEffect(() => {
     if (!session) return;
     fetch('/api/workspaces')
       .then(r => r.json())
       .then(data => {
-        if (Array.isArray(data)) {
-          setWorkspaces(data);
-          if (data.length > 0 && !workspaceId) setWorkspaceId(data[0].id);
-        }
+        if (!Array.isArray(data)) return;
+        const editable = data.filter((w: { role: string }) => w.role === 'owner' || w.role === 'editor');
+        const isReaderOnly = !session.user.isGlobalAdmin && editable.length === 0 && data.length > 0;
+        if (isReaderOnly) { window.location.href = '/rapports'; return; }
+        setWorkspaces(editable);
+        if (editable.length > 0 && !workspaceId) setWorkspaceId(editable[0].id);
       })
       .catch(() => { /* ignore */ });
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps

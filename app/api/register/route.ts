@@ -39,18 +39,6 @@ export async function POST(req: NextRequest) {
       args: [userId, email.toLowerCase().trim(), hash, name || '', isAdmin, now],
     });
 
-    // Create default workspace for the new user
-    const wsId = uid();
-    const wsName = name ? `Espace de ${name}` : 'Mon espace';
-    await db.execute({
-      sql: 'INSERT INTO workspaces (id, name, owner_id, created_at) VALUES (?, ?, ?, ?)',
-      args: [wsId, wsName, userId, now],
-    });
-    await db.execute({
-      sql: 'INSERT INTO workspace_members (user_id, workspace_id, role) VALUES (?, ?, ?)',
-      args: [userId, wsId, 'admin'],
-    });
-
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('[register]', err);
