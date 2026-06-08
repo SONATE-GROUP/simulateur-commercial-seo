@@ -5,6 +5,7 @@ import Providers from './providers';
 export const metadata: Metadata = {
   title: 'SONATE SEO',
   description: 'Simulateur de potentiel SEO — projetez votre ROI organique',
+  icons: { icon: '/icon.svg' },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
