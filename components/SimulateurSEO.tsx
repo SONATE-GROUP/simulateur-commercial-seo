@@ -16,6 +16,7 @@ interface Category {
   id: string;
   name: string;
   budget: number; // monthly budget for this category (€/month)
+  coeff?: 1 | 2 | 5 | 10 | 20;
 }
 
 interface Keyword {
@@ -429,10 +430,10 @@ export default function SimulateurSEO() {
   /* Per-keyword results */
   const kwResults = useMemo(() => {
     const coeffSante = Math.max(0.01, healthScore / 80);
-    // Pre-compute per-category stats (budget + keyword count)
-    const catStats: Record<string, { budget: number; nbKws: number }> = {};
+    // Pre-compute per-category stats (budget + keyword count + coeff)
+    const catStats: Record<string, { budget: number; nbKws: number; coeff: number }> = {};
     categories.forEach(cat => {
-      catStats[cat.id] = { budget: cat.budget ?? 700, nbKws: 0 };
+      catStats[cat.id] = { budget: cat.budget ?? 700, nbKws: 0, coeff: cat.coeff ?? 1 };
     });
     keywords.forEach(kw => {
       if (catStats[kw.categoryId]) catStats[kw.categoryId].nbKws++;
@@ -441,7 +442,7 @@ export default function SimulateurSEO() {
     // proximity: 1=exact(×1.0), 2=très proche(×1.5), 3=thématique(×3.0)
     const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
     return keywords.map(kw => {
-      const stats       = catStats[kw.categoryId] ?? { budget: 700, nbKws: 1 };
+      const stats       = catStats[kw.categoryId] ?? { budget: 700, nbKws: 1, coeff: 1 };
       const nbKws       = Math.max(1, stats.nbKws);
       const budgetPerKw = stats.budget / nbKws;
       const logBudget   = Math.log(1 + Math.max(0, budgetPerKw) / 20);
@@ -450,7 +451,7 @@ export default function SimulateurSEO() {
       const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
       const baseCtr = CTR_TABLE[pos] ?? 0;
       const ctr    = baseCtr * (budgetRatio / 100);
-      const traffic = kw.volume * ctr;
+      const traffic = kw.volume * ctr * stats.coeff;
       const leads  = traffic * (cr[kw.intention as Intention] / 100);
       const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
       const ca     = leads * basketValue * leadConv;
@@ -644,6 +645,9 @@ export default function SimulateurSEO() {
 
   const updateCategoryBudget = (catId: string, budget: number) =>
     setState(s => ({ ...s, categories: s.categories.map(c => c.id === catId ? { ...c, budget } : c) }));
+
+  const updateCategoryCoeff = (catId: string, coeff: 1 | 2 | 5 | 10 | 20) =>
+    setState(s => ({ ...s, categories: s.categories.map(c => c.id === catId ? { ...c, coeff } : c) }));
 
   const removeCategory = (catId: string) => setState(s => {
     const fallback = s.categories.find(c => c.id !== catId)?.id ?? null;
@@ -1134,6 +1138,15 @@ export default function SimulateurSEO() {
                         style={{ width: 38, backgroundColor: L_INPUT, border: `1px solid ${L_BORD}`, borderRadius: 3, color: L_DARK, fontSize: 11, padding: '2px 4px', textAlign: 'center', outline: 'none' }}
                       />
                       <span style={{ fontSize: 10, color: L_MED }}>mots-clés</span>
+                      <select
+                        value={cat.coeff ?? 1}
+                        onClick={e => e.stopPropagation()}
+                        onChange={e => updateCategoryCoeff(cat.id, Number(e.target.value) as 1 | 2 | 5 | 10 | 20)}
+                        style={{ marginLeft: 6, fontSize: 10, border: `1px solid ${L_BORD}`, borderRadius: 3, padding: '2px 4px', background: L_INPUT, color: (cat.coeff ?? 1) > 1 ? ORANGE : L_DARK, fontWeight: (cat.coeff ?? 1) > 1 ? 700 : 400, cursor: 'pointer', outline: 'none' }}
+                        title="Coefficient multiplicateur de sortie"
+                      >
+                        {[1, 2, 5, 10, 20].map(v => <option key={v} value={v}>×{v}</option>)}
+                      </select>
                     </div>
                     <button
                       onClick={e => { e.stopPropagation(); addKw(cat.id); if (!isOpen) toggleCat(cat.id); }}
