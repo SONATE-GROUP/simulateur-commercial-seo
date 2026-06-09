@@ -15,10 +15,11 @@ export async function GET() {
   await initDb();
 
   const res = await db.execute(
-    'SELECT id, email, name, is_global_admin, created_at FROM users ORDER BY created_at DESC'
+    'SELECT id, email, name, is_global_admin, created_at, first_login_at, last_login_at, login_count FROM users ORDER BY created_at DESC'
   );
   return NextResponse.json(res.rows.map(r => ({
     id: r[0], email: r[1], name: r[2], isGlobalAdmin: Boolean(r[3]), createdAt: r[4],
+    firstLoginAt: r[5] ?? null, lastLoginAt: r[6] ?? null, loginCount: r[7] ?? 0,
   })));
 }
 

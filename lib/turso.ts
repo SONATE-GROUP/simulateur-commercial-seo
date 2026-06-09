@@ -13,6 +13,10 @@ export async function initDb() {
   const migrations = [
     'ALTER TABLE reports ADD COLUMN workspace_id TEXT',
     'ALTER TABLE reports ADD COLUMN created_by TEXT',
+    'ALTER TABLE users ADD COLUMN first_login_at TEXT',
+    'ALTER TABLE users ADD COLUMN last_login_at TEXT',
+    'ALTER TABLE users ADD COLUMN login_count INTEGER DEFAULT 0',
+    'ALTER TABLE users ADD COLUMN status TEXT DEFAULT \'active\'',
   ];
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column already exists */ }
@@ -25,7 +29,11 @@ export async function initDb() {
       password_hash    TEXT NOT NULL,
       name             TEXT DEFAULT '',
       is_global_admin  INTEGER DEFAULT 0,
-      created_at       TEXT NOT NULL
+      created_at       TEXT NOT NULL,
+      first_login_at   TEXT,
+      last_login_at    TEXT,
+      login_count      INTEGER DEFAULT 0,
+      status           TEXT DEFAULT 'active'
     );
 
     CREATE TABLE IF NOT EXISTS workspaces (
@@ -51,6 +59,18 @@ export async function initDb() {
       created_at   TEXT NOT NULL,
       workspace_id TEXT,
       created_by   TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS invitations (
+      id             TEXT PRIMARY KEY,
+      token          TEXT UNIQUE NOT NULL,
+      email          TEXT NOT NULL,
+      invited_by     TEXT NOT NULL,
+      workspace_id   TEXT,
+      workspace_role TEXT DEFAULT 'reader',
+      expires_at     TEXT NOT NULL,
+      accepted_at    TEXT,
+      created_at     TEXT NOT NULL
     );
   `);
 }
