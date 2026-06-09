@@ -473,13 +473,15 @@ export default function SimulateurSEO() {
     const nbKeywords = keywords.length * kwMultiplier;
     const budgetMensuel = categories.reduce((s, c) => s + (c.budget ?? 700), 0) * (budgetRatio / 100);
     const budgetTotal  = budgetMensuel * 12;
+    const roi1an       = budgetTotal > 0 ? ((totalCA * 5.83 - budgetTotal) / budgetTotal) * 100 : 0;
+    const roiMult1an   = budgetTotal > 0 ? (totalCA * 5.83) / budgetTotal : 0;
     const roi2ans      = budgetTotal > 0 ? ((totalCA * 18.5 - budgetTotal) / budgetTotal) * 100 : 0;
     const roiMult      = budgetTotal > 0 ? (totalCA * 18.5) / budgetTotal : 0;
     // Extra lead-mode values (unscaled, for funnel display)
     const baseLeads  = rawLeads;
     const baseRdv    = baseLeads * (tauxRdv / 100);
     const baseClosing = baseRdv * (tauxClosing / 100);
-    return { totalCA, totalLeads, totalTraffic, totalImpressions, nbPages, nbKeywords, budgetMensuel, budgetTotal, roi2ans, roiMult, baseLeads, baseRdv, baseClosing };
+    return { totalCA, totalLeads, totalTraffic, totalImpressions, nbPages, nbKeywords, budgetMensuel, budgetTotal, roi1an, roiMult1an, roi2ans, roiMult, baseLeads, baseRdv, baseClosing };
   }, [kwResults, keywords, categories, budgetRatio, kwMultiplier, businessType, tauxRdv, tauxClosing, basketValue]);
 
   /* Monthly projection */
@@ -1430,18 +1432,34 @@ export default function SimulateurSEO() {
               </div>
             </div>
 
-            <div style={{
-              flex: 1, backgroundColor: G5, borderRadius: 12, padding: '24px 22px',
-              border: `1px solid ${G3}`,
-            }}>
-              <div style={{ color: '#7a9e8e', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-                ROI à 2 ans
+            <div style={{ flex: 1, display: 'flex', gap: 10 }}>
+              <div style={{
+                flex: 1, backgroundColor: G5, borderRadius: 12, padding: '24px 22px',
+                border: `1px solid ${G3}`,
+              }}>
+                <div style={{ color: '#7a9e8e', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+                  ROI à 1 an
+                </div>
+                <div style={{ color: CREAM, fontSize: 40, fontWeight: 800, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                  ×{totals.roiMult1an.toFixed(1)}
+                </div>
+                <div style={{ color: '#5a7a6a', fontSize: 12, marginTop: 8 }}>
+                  +{fmtN(totals.roi1an)}% sur investissement à 1 an
+                </div>
               </div>
-              <div style={{ color: CREAM, fontSize: 40, fontWeight: 800, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-                ×{totals.roiMult.toFixed(1)}
-              </div>
-              <div style={{ color: '#5a7a6a', fontSize: 12, marginTop: 8 }}>
-                +{fmtN(totals.roi2ans)}% sur investissement à 2 ans
+              <div style={{
+                flex: 1, backgroundColor: G5, borderRadius: 12, padding: '24px 22px',
+                border: `1px solid ${G3}`,
+              }}>
+                <div style={{ color: '#7a9e8e', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+                  ROI à 2 ans
+                </div>
+                <div style={{ color: CREAM, fontSize: 40, fontWeight: 800, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                  ×{totals.roiMult.toFixed(1)}
+                </div>
+                <div style={{ color: '#5a7a6a', fontSize: 12, marginTop: 8 }}>
+                  +{fmtN(totals.roi2ans)}% sur investissement à 2 ans
+                </div>
               </div>
             </div>
           </div>
