@@ -22,8 +22,21 @@ export const authOptions: NextAuthOptions = {
         const row = res.rows[0];
         const valid = await bcrypt.compare(credentials.password, row[2] as string);
         if (!valid) return null;
+
+        const userId = row[0] as string;
+        const now    = new Date().toISOString();
+        // Track login: set first_login_at on first login, always update last_login_at
+        await db.execute({
+          sql: `UPDATE users SET
+                  last_login_at  = ?,
+                  login_count    = COALESCE(login_count, 0) + 1,
+                  first_login_at = CASE WHEN first_login_at IS NULL THEN ? ELSE first_login_at END
+                WHERE id = ?`,
+          args: [now, now, userId],
+        });
+
         return {
-          id:            row[0] as string,
+          id:            userId,
           email:         row[1] as string,
           name:          (row[3] as string) || '',
           isGlobalAdmin: Boolean(row[4]),
