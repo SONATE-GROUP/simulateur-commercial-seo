@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { db, initDb } from '@/lib/turso';
-import { sendInvitationEmail } from '@/lib/email';
 import crypto from 'crypto';
 
 export const runtime = 'nodejs';
@@ -41,16 +40,8 @@ export async function POST(req: NextRequest) {
     args: [newToken, newExpiry, invitationId],
   });
 
-  const baseUrl    = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
-  const inviteUrl  = `${baseUrl}/invite/${newToken}`;
-  const inviterName = (row[5] as string | null) || (row[6] as string | null) || 'L\'administrateur';
+  const baseUrl   = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+  const inviteUrl = `${baseUrl}/invite/${newToken}`;
 
-  await sendInvitationEmail({
-    to: email,
-    inviteUrl,
-    invitedBy: inviterName,
-    workspaceName: (row[4] as string | null) ?? undefined,
-  });
-
-  return NextResponse.json({ ok: true, expiresAt: newExpiry });
+  return NextResponse.json({ ok: true, expiresAt: newExpiry, inviteUrl });
 }

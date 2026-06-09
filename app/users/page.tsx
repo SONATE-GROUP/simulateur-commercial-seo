@@ -71,14 +71,17 @@ export default function UsersPage() {
   const [loading, setLoading]           = useState(true);
 
   // Invite form
-  const [inviteEmail, setInviteEmail]       = useState('');
+  const [inviteEmail, setInviteEmail]         = useState('');
   const [inviteWorkspace, setInviteWorkspace] = useState('');
-  const [inviteRole, setInviteRole]         = useState('reader');
-  const [sending, setSending]               = useState(false);
-  const [inviteMsg, setInviteMsg]           = useState<{ ok: boolean; text: string } | null>(null);
+  const [inviteRole, setInviteRole]           = useState('reader');
+  const [sending, setSending]                 = useState(false);
+  const [inviteMsg, setInviteMsg]             = useState<{ ok: boolean; text: string } | null>(null);
+  const [freshLink, setFreshLink]             = useState<string | null>(null);
+  const [copied, setCopied]                   = useState(false);
 
   // Resend state
-  const [resending, setResending] = useState<string | null>(null);
+  const [resending, setResending]   = useState<string | null>(null);
+  const [resendLinks, setResendLinks] = useState<Record<string, string>>({});
 
   const loadData = useCallback(async () => {
     const [usersRes, invRes, wsRes] = await Promise.all([
@@ -116,13 +119,16 @@ export default function UsersPage() {
     });
     const data = await res.json();
     if (res.ok) {
-      setInviteMsg({ ok: true, text: `Invitation envoyée à ${inviteEmail}` });
+      setInviteMsg({ ok: true, text: `Lien généré pour ${inviteEmail}` });
+      setFreshLink(data.inviteUrl);
+      setCopied(false);
       setInviteEmail('');
       setInviteWorkspace('');
       setInviteRole('reader');
       setInvitations(prev => [data, ...prev]);
     } else {
       setInviteMsg({ ok: false, text: data.error || 'Erreur' });
+      setFreshLink(null);
     }
     setSending(false);
   };
@@ -134,14 +140,23 @@ export default function UsersPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ invitationId: inv.id }),
     });
+    const data = await res.json();
     if (res.ok) {
       setInvitations(prev => prev.map(i =>
         i.id === inv.id
           ? { ...i, status: 'pending', expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() }
           : i
       ));
+      setResendLinks(prev => ({ ...prev, [inv.id]: data.inviteUrl }));
     }
     setResending(null);
+  };
+
+  const copyLink = (url: string, key: string) => {
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    // Mark as copied per-row too (reuse copied state for simplicity)
   };
 
   const toggleAdmin = async (userId: string, current: boolean) => {
@@ -247,7 +262,7 @@ export default function UsersPage() {
                 fontWeight: 700, cursor: sending ? 'not-allowed' : 'pointer',
                 opacity: sending ? 0.7 : 1,
               }}>
-                {sending ? 'Envoi…' : '↑ Envoyer une invitation'}
+                {sending ? 'Génération…' : '+ Générer un lien d\'invitation'}
               </button>
               {inviteMsg && (
                 <span style={{ fontSize: 13, color: inviteMsg.ok ? '#4caf7d' : '#e05050' }}>
@@ -256,6 +271,19 @@ export default function UsersPage() {
               )}
             </div>
           </form>
+
+          {freshLink && (
+            <div style={{ marginTop: 14, backgroundColor: G3, borderRadius: 8, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: '#7a9e8e', flexShrink: 0 }}>Lien à envoyer :</span>
+              <span style={{ fontSize: 12, color: CREAM, flex: 1, wordBreak: 'break-all', fontFamily: 'monospace' }}>{freshLink}</span>
+              <button
+                onClick={() => { navigator.clipboard.writeText(freshLink); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                style={{ backgroundColor: copied ? '#4caf7d' : ORANGE, border: 'none', borderRadius: 6, padding: '6px 14px', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+              >
+                {copied ? '✓ Copié !' : 'Copier'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Invitations list */}
@@ -295,20 +323,34 @@ export default function UsersPage() {
                   <span style={{ fontSize: 11, color: '#5a7a6a' }}>
                     {inv.status === 'accepted' ? fmt(inv.acceptedAt) : fmt(inv.expiresAt)}
                   </span>
-                  <div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
                     {inv.status !== 'accepted' && (
-                      <button
-                        onClick={() => resendInvite(inv)}
-                        disabled={resending === inv.id}
-                        style={{
-                          backgroundColor: 'transparent', border: `1px solid ${G4}`,
-                          borderRadius: 6, padding: '4px 10px', color: '#7a9e8e',
-                          fontSize: 11, cursor: resending === inv.id ? 'not-allowed' : 'pointer',
-                          opacity: resending === inv.id ? 0.6 : 1, whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {resending === inv.id ? '…' : 'Renvoyer'}
-                      </button>
+                      <>
+                        <button
+                          onClick={() => resendInvite(inv)}
+                          disabled={resending === inv.id}
+                          style={{
+                            backgroundColor: 'transparent', border: `1px solid ${G4}`,
+                            borderRadius: 6, padding: '4px 10px', color: '#7a9e8e',
+                            fontSize: 11, cursor: resending === inv.id ? 'not-allowed' : 'pointer',
+                            opacity: resending === inv.id ? 0.6 : 1, whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {resending === inv.id ? '…' : 'Régénérer'}
+                        </button>
+                        {resendLinks[inv.id] && (
+                          <button
+                            onClick={() => { navigator.clipboard.writeText(resendLinks[inv.id]); }}
+                            style={{
+                              backgroundColor: ORANGE + '22', border: `1px solid ${ORANGE}44`,
+                              borderRadius: 6, padding: '4px 10px', color: ORANGE,
+                              fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Copier lien
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
