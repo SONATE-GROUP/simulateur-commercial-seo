@@ -289,6 +289,13 @@ export default function UsersPage() {
             }}>
               👥 Espaces clients
             </Link>
+            <Link href="/configuration" style={{
+              backgroundColor: 'transparent', border: `1px solid ${G3}`,
+              borderRadius: 8, padding: '9px 18px', color: CREAM,
+              fontSize: 13, fontWeight: 600, textDecoration: 'none',
+            }}>
+              ⚙️ Configuration
+            </Link>
             <Link href="/" style={{
               backgroundColor: ORANGE, color: '#fff',
               padding: '9px 18px', borderRadius: 8, fontSize: 13,
