@@ -97,6 +97,15 @@ export default function WorkspacesPage() {
                 👤 Utilisateurs
               </Link>
             )}
+            {isAdmin && (
+              <Link href="/configuration" style={{
+                backgroundColor: 'transparent', border: `1px solid ${G3}`,
+                borderRadius: 8, padding: '9px 18px', color: CREAM,
+                fontSize: 13, fontWeight: 600, textDecoration: 'none',
+              }}>
+                ⚙️ Configuration
+              </Link>
+            )}
             <Link href="/rapports" style={{
               backgroundColor: 'transparent', border: `1px solid ${G3}`,
               borderRadius: 8, padding: '9px 18px', color: CREAM,
