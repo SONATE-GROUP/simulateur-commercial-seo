@@ -1159,8 +1159,14 @@ export default function SimulateurSEO() {
                       value={cat.name}
                       onClick={e => e.stopPropagation()}
                       onChange={e => renameCategory(cat.id, e.target.value)}
-                      style={{ flex: 1, border: 'none', background: 'transparent', color: L_DARK, fontWeight: 700, fontSize: 12, outline: 'none', cursor: 'text' }}
+                      style={{ flex: '1 1 110px', minWidth: 0, border: 'none', background: 'transparent', color: L_DARK, fontWeight: 700, fontSize: 12, outline: 'none', cursor: 'text' }}
                     />
+                    <button
+                      onClick={e => { e.stopPropagation(); removeCategory(cat.id); }}
+                      aria-label={`Supprimer la catégorie ${cat.name || 'sans nom'}`}
+                      title="Supprimer la catégorie"
+                      style={{ background: '#fff6f3', border: `1px solid ${ORANGE}`, borderRadius: 4, color: ORANGE, cursor: 'pointer', padding: '2px 6px', lineHeight: 1.1, fontSize: 10, fontWeight: 800, flexShrink: 0, whiteSpace: 'nowrap' }}
+                    >Suppr.</button>
                     <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                       <NumInput
                         value={catKws.length} min={0}
@@ -1191,18 +1197,6 @@ export default function SimulateurSEO() {
                       onClick={e => { e.stopPropagation(); addKw(cat.id); }}
                       style={{ background: ORANGE, border: 'none', borderRadius: 3, padding: '2px 7px', color: 'white', fontSize: 10, cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' }}
                     >+ Ajouter</button>
-                    <button
-                      onClick={e => { e.stopPropagation(); removeCategory(cat.id); }}
-                      title="Supprimer la catégorie"
-                      style={{ background: 'none', border: 'none', color: '#c05050', cursor: 'pointer', padding: '2px 4px', lineHeight: 1, display: 'flex', alignItems: 'center', flexShrink: 0 }}
-                    >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                        <path d="M10 11v6M14 11v6" />
-                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                      </svg>
-                    </button>
                   </div>
 
                   {/* Keywords table */}
