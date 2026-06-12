@@ -718,6 +718,8 @@ export default function SimulateurSEO() {
 
   const [saveError, setSaveError] = useState('');
   const [funnelPeriod, setFunnelPeriod] = useState<'month' | 'year'>('month');
+  const [selectedCatIds, setSelectedCatIds] = useState<Set<string>>(new Set());
+  const [bulkBudget, setBulkBudget] = useState<string>('');
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string>('');
   const [creatingNewSpace, setCreatingNewSpace] = useState(false);
@@ -1310,20 +1312,92 @@ export default function SimulateurSEO() {
               </div>
             ) : (
               <>
+                {/* Barre de sélection / application en masse */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <input
+                    type="checkbox"
+                    id="select-all-cats"
+                    checked={selectedCatIds.size === categories.length && categories.length > 0}
+                    ref={el => { if (el) el.indeterminate = selectedCatIds.size > 0 && selectedCatIds.size < categories.length; }}
+                    onChange={e => setSelectedCatIds(e.target.checked ? new Set(categories.map(c => c.id)) : new Set())}
+                    style={{ cursor: 'pointer', accentColor: ORANGE }}
+                  />
+                  <label htmlFor="select-all-cats" style={{ fontSize: 11, color: L_MED, cursor: 'pointer', userSelect: 'none' }}>
+                    {selectedCatIds.size === 0 ? 'Tout sélectionner' : `${selectedCatIds.size} sélectionné${selectedCatIds.size > 1 ? 's' : ''}`}
+                  </label>
+                  {selectedCatIds.size > 0 && (
+                    <>
+                      <input
+                        type="number"
+                        min={0} max={5000} step={100}
+                        placeholder="Budget €"
+                        value={bulkBudget}
+                        onChange={e => setBulkBudget(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            const v = Math.min(5000, Math.max(0, Number(bulkBudget)));
+                            if (!isNaN(v)) {
+                              selectedCatIds.forEach(id => updateCategoryBudget(id, v));
+                              setBulkBudget('');
+                              setSelectedCatIds(new Set());
+                            }
+                          }
+                        }}
+                        style={{
+                          marginLeft: 'auto', width: 90, fontSize: 12, padding: '3px 6px',
+                          border: `1px solid ${L_BORD}`, borderRadius: 6, outline: 'none',
+                          background: 'white', color: '#222',
+                        }}
+                      />
+                      <button
+                        onClick={() => {
+                          const v = Math.min(5000, Math.max(0, Number(bulkBudget)));
+                          if (!isNaN(v) && bulkBudget !== '') {
+                            selectedCatIds.forEach(id => updateCategoryBudget(id, v));
+                            setBulkBudget('');
+                            setSelectedCatIds(new Set());
+                          }
+                        }}
+                        style={{
+                          fontSize: 11, padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
+                          background: ORANGE, color: 'white', border: 'none', fontWeight: 600,
+                        }}
+                      >
+                        Appliquer
+                      </button>
+                    </>
+                  )}
+                </div>
+
                 {categories.map(cat => {
                   const nb  = keywords.filter(k => k.categoryId === cat.id).length;
                   const bpk = nb > 0 ? (cat.budget ?? 700) / nb : (cat.budget ?? 700);
                   const coeff = (bpk / 500) ** 2;
+                  const isSelected = selectedCatIds.has(cat.id);
                   return (
-                    <div key={cat.id}>
-                      <Slider
-                        light
-                        label={cat.name}
-                        value={cat.budget ?? 700}
-                        min={0} max={5000} step={100} unit="€"
-                        hint={`${nb} kw → ${fmtC(Math.round(bpk))}/kw · coeff ×${coeff.toFixed(2)} ${coeff >= 1 ? '↑' : '↓'}`}
-                        onChange={v => updateCategoryBudget(cat.id, v)}
+                    <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={e => {
+                          setSelectedCatIds(prev => {
+                            const next = new Set(prev);
+                            e.target.checked ? next.add(cat.id) : next.delete(cat.id);
+                            return next;
+                          });
+                        }}
+                        style={{ cursor: 'pointer', accentColor: ORANGE, flexShrink: 0 }}
                       />
+                      <div style={{ flex: 1 }}>
+                        <Slider
+                          light
+                          label={cat.name}
+                          value={cat.budget ?? 700}
+                          min={0} max={5000} step={100} unit="€"
+                          hint={`${nb} kw → ${fmtC(Math.round(bpk))}/kw · coeff ×${coeff.toFixed(2)} ${coeff >= 1 ? '↑' : '↓'}`}
+                          onChange={v => updateCategoryBudget(cat.id, v)}
+                        />
+                      </div>
                     </div>
                   );
                 })}
