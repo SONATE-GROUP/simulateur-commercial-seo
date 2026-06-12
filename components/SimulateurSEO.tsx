@@ -1576,7 +1576,7 @@ export default function SimulateurSEO() {
               border: `2px solid ${ORANGE}`,
             }}>
               <div style={{ color: '#7a9e8e', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-                CA Potentiel / An
+                CA Prévisionnel / An
               </div>
               <div style={{ color: ORANGE, fontSize: 40, fontWeight: 800, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
                 {fmtC(totals.totalCA * 12)}
