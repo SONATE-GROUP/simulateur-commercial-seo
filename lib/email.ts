@@ -11,7 +11,7 @@ export async function sendInvitationEmail({
 }) {
   const apiKey  = process.env.BREVO_API_KEY;
   const appName = 'Simulateur SEO';
-  const senderEmail = process.env.EMAIL_FROM_ADDRESS ?? 'noreply@wedig.fr';
+  const senderEmail = process.env.EMAIL_FROM_ADDRESS ?? 'fabien.guilleux@news.sonate.group';
   const senderName  = process.env.EMAIL_FROM_NAME    ?? 'Simulateur SEO';
 
   const workspaceLine = workspaceName
