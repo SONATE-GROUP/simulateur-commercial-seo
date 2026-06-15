@@ -453,11 +453,11 @@ export default function SimulateurSEO() {
       const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
       const baseCtr = CTR_TABLE[pos] ?? 0;
       const ctr    = baseCtr * (budgetRatio / 100);
-      const traffic = kw.volume * ctr;
+      const traffic = kw.volume * ctr * stats.coeff;
       const leads  = traffic * (cr[kw.intention as Intention] / 100);
       const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
       const ca     = leads * basketValue * leadConv;
-      return { ...kw, pos, ctr, traffic, leads, ca };
+      return { ...kw, pos, ctr, traffic, leads, ca, coeff: stats.coeff };
     });
   }, [keywords, categories, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing]);
 
