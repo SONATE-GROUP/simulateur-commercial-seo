@@ -371,6 +371,7 @@ export default function SimulateurSEO() {
   const [reportId, setReportId]       = useState<string | null>(null);
   const [openCats, setOpenCats] = useState<Set<string>>(new Set(['cat1', 'cat2']));
   const [expandedKws, setExpandedKws] = useState<Set<string>>(new Set());
+  const [budgetTooltipKwId, setBudgetTooltipKwId] = useState<string | null>(null);
   const toggleKwExpand = (id: string) => setExpandedKws(prev => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -435,41 +436,152 @@ export default function SimulateurSEO() {
       .catch(() => { /* ignore */ });
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Per-keyword results */
-  const kwResults = useMemo(() => {
+  /* Budget allocation per keyword over 12 months (sudoku-style) */
+  const kwAllocations = useMemo(() => {
+    const CHUNK = 200; // € per allocation step
+    const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
     const coeffSante = Math.max(0.01, healthScore / 80);
-    // Pre-compute per-category stats (budget + keyword count + coeff)
-    const catStats: Record<string, { budget: number; nbKws: number; coeff: number }> = {};
+
+    // Per-category: budget (scaled by budgetRatio), keyword count, coeff
+    const catBudget: Record<string, number> = {};
+    const catNbKws:  Record<string, number> = {};
+    const catCoeff:  Record<string, number> = {};
     categories.forEach(cat => {
-      catStats[cat.id] = { budget: cat.budget ?? 700, nbKws: 0, coeff: cat.coeff ?? 1 };
+      catBudget[cat.id] = (cat.budget ?? 700) * (budgetRatio / 100);
+      catNbKws[cat.id]  = 0;
+      catCoeff[cat.id]  = cat.coeff ?? 1;
     });
+    keywords.forEach(kw => { if (catNbKws[kw.categoryId] !== undefined) catNbKws[kw.categoryId]++; });
+
+    // Compute posRaw for a keyword given its individual cumulative budget
+    const getPosRaw = (kw: Keyword, cumBudget: number): number => {
+      const nb  = Math.max(1, catNbKws[kw.categoryId] ?? 1);
+      const lb  = Math.log(1 + Math.max(0, cumBudget) / 20);
+      if (lb === 0) return 100;
+      const den = 225 * da * (coeffSante / 70) * Math.sqrt(nb) * lb;
+      return den > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / den : 100;
+    };
+    const getPos = (raw: number) => Math.min(Math.max(Math.round(raw), 1), 11);
+
+    // Potential = Volume × cr[intention] × proximity × ΔCTR / difficulty²
+    const getPotential = (kw: Keyword, cumBudget: number): number => {
+      const pos = getPos(getPosRaw(kw, cumBudget));
+      if (pos <= 1) return 0; // already at best position
+      const gain = (CTR_TABLE[pos - 1] ?? 0) - (CTR_TABLE[pos] ?? 0);
+      if (gain <= 0) return 0;
+      const crVal = cr[kw.intention as Intention]; // already in %
+      const diff2 = (kw.difficulty || 1) * (kw.difficulty || 1);
+      return kw.volume * crVal * kw.proximity * gain / diff2;
+    };
+
+    // Initialize per-keyword tracking
+    const kwBudgetPerMonth: Record<string, number[]> = {};
+    const kwCumBudget:      Record<string, number>   = {};
+    const kwFirstMonth:     Record<string, number | null> = {};
     keywords.forEach(kw => {
-      if (catStats[kw.categoryId]) catStats[kw.categoryId].nbKws++;
+      kwBudgetPerMonth[kw.id] = Array(12).fill(0);
+      kwCumBudget[kw.id]      = 0;
+      kwFirstMonth[kw.id]     = null;
     });
 
-    // proximity: 1=exact(×1.0), 2=très proche(×1.5), 3=thématique(×3.0)
-    const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
-    return keywords.map(kw => {
-      const stats       = catStats[kw.categoryId] ?? { budget: 700, nbKws: 1, coeff: 1 };
-      const nbKws       = Math.max(1, stats.nbKws);
-      const budgetPerKw = stats.budget / nbKws;
-      const logBudget   = Math.log(1 + Math.max(0, budgetPerKw) / 20);
-      const denom       = 225 * da * (coeffSante / 70) * Math.sqrt(nbKws) * logBudget;
-      const posRaw      = denom > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / denom : 100;
-      const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
-      // Monthly position progression M+1..M+12: authority grows with ramp-up curve
-      const monthlyPos = RAMP_UP_DATA.map(({ pct }) =>
-        Math.min(Math.max(Math.round(posRaw / (pct / 100)), 1), 11)
-      );
-      const baseCtr = CTR_TABLE[pos] ?? 0;
-      const ctr    = baseCtr * (budgetRatio / 100);
-      const traffic = kw.volume * ctr * stats.coeff;
-      const leads  = traffic * (cr[kw.intention as Intention] / 100);
-      const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
-      const ca     = leads * basketValue * leadConv;
-      return { ...kw, pos, monthlyPos, ctr, traffic, leads, ca, coeff: stats.coeff };
+    // 12-month allocation loop
+    for (let m = 0; m < 12; m++) {
+      // Allocate each category's monthly budget in CHUNK-€ increments
+      categories.forEach(cat => {
+        const monthly = catBudget[cat.id] ?? 0;
+        if (monthly <= 0) return;
+        const catKws = keywords.filter(kw => kw.categoryId === cat.id);
+        if (catKws.length === 0) return;
+
+        let remaining = monthly;
+        while (remaining > 0) {
+          const chunk = Math.min(CHUNK, remaining);
+          // Find keyword with highest potential given current cumulative budgets
+          let bestKw: Keyword | null = null;
+          let bestPot = -Infinity;
+          for (const kw of catKws) {
+            const pot = getPotential(kw, kwCumBudget[kw.id]);
+            if (pot > bestPot) { bestPot = pot; bestKw = kw; }
+          }
+          if (!bestKw || bestPot <= 0) break;
+
+          kwCumBudget[bestKw.id]          += chunk;
+          kwBudgetPerMonth[bestKw.id][m]  += chunk;
+          if (kwFirstMonth[bestKw.id] === null) kwFirstMonth[bestKw.id] = m;
+          remaining -= chunk;
+        }
+      });
+    }
+
+    // Build result map
+    const result: Record<string, {
+      budgetPerMonth: number[];
+      cumulativePerMonth: number[];
+      firstMonthIdx: number | null;
+      totalBudget: number;
+      catCoeff: number;
+      nbKwsInCat: number;
+    }> = {};
+    keywords.forEach(kw => {
+      const bpm = kwBudgetPerMonth[kw.id];
+      const cpm = bpm.reduce<number[]>((acc, b) => {
+        acc.push((acc[acc.length - 1] ?? 0) + b);
+        return acc;
+      }, []);
+      result[kw.id] = {
+        budgetPerMonth:     bpm,
+        cumulativePerMonth: cpm,
+        firstMonthIdx:      kwFirstMonth[kw.id],
+        totalBudget:        cpm[11] ?? 0,
+        catCoeff:           catCoeff[kw.categoryId] ?? 1,
+        nbKwsInCat:         catNbKws[kw.categoryId] ?? 1,
+      };
     });
-  }, [keywords, categories, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing]);
+    return result;
+  }, [keywords, categories, da, healthScore, budgetRatio, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Per-keyword results */
+  const kwResults = useMemo(() => {
+    const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
+    const coeffSante = Math.max(0.01, healthScore / 80);
+
+    return keywords.map(kw => {
+      const alloc    = kwAllocations[kw.id];
+      const nb       = Math.max(1, alloc?.nbKwsInCat ?? 1);
+      const coeff    = alloc?.catCoeff ?? 1;
+      const totalBudget = alloc?.totalBudget ?? 0;
+
+      // Position at M+12 (full year cumulative budget)
+      const lb12   = Math.log(1 + Math.max(0, totalBudget) / 20);
+      const den12  = lb12 > 0 ? 225 * da * (coeffSante / 70) * Math.sqrt(nb) * lb12 : 0;
+      const posRaw = den12 > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / den12 : 100;
+      const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
+
+      // Monthly positions based on actual cumulative budget at each month end
+      const monthlyPos = (alloc?.cumulativePerMonth ?? Array(12).fill(0)).map(cumBudget => {
+        if (cumBudget === 0) return 11;
+        const lb = Math.log(1 + cumBudget / 20);
+        const d  = lb > 0 ? 225 * da * (coeffSante / 70) * Math.sqrt(nb) * lb : 0;
+        const pr = d > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / d : 100;
+        return Math.min(Math.max(Math.round(pr), 1), 11);
+      });
+
+      const baseCtr = CTR_TABLE[pos] ?? 0;
+      const ctr     = baseCtr * (budgetRatio / 100);
+      const traffic = kw.volume * ctr * coeff;
+      const leads   = traffic * (cr[kw.intention as Intention] / 100);
+      const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
+      const ca      = leads * basketValue * leadConv;
+
+      return {
+        ...kw, pos, monthlyPos, ctr, traffic, leads, ca, coeff,
+        allocatedBudget: totalBudget,
+        firstMonth: alloc?.firstMonthIdx !== null && alloc?.firstMonthIdx !== undefined
+          ? alloc.firstMonthIdx + 1 : null,
+        budgetPerMonth: alloc?.budgetPerMonth ?? Array(12).fill(0),
+      };
+    });
+  }, [kwAllocations, keywords, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing]);
 
   /* Totals */
   const totals = useMemo(() => {
@@ -1860,6 +1972,8 @@ export default function SimulateurSEO() {
                       { label: businessType === 'ecommerce' ? 'Ventes / mois' : 'Leads / mois', align: 'right' },
                       { label: 'CA / mois',        align: 'right'  },
                       { label: 'Intention',        align: 'center' },
+                      { label: 'Budget / an',      align: 'right'  },
+                      { label: '1er mois',         align: 'center' },
                     ].map(({ label, align }) => (
                       <th key={label} style={{
                         padding: '6px 8px',
@@ -1873,6 +1987,7 @@ export default function SimulateurSEO() {
                 <tbody>
                   {kwResults.map(kw => {
                     const isExpanded = expandedKws.has(kw.id);
+                    const showBudgetTip = budgetTooltipKwId === kw.id;
                     return (
                       <>
                         <tr key={kw.id} style={{ borderBottom: isExpanded ? 'none' : `1px solid ${G3}` }}>
@@ -1922,17 +2037,71 @@ export default function SimulateurSEO() {
                               {INTENT_LABEL[kw.intention]}
                             </span>
                           </td>
+                          {/* Budget alloué / an avec tooltip hover */}
+                          <td style={{ padding: '8px', textAlign: 'right', position: 'relative' }}>
+                            <span
+                              onMouseEnter={() => setBudgetTooltipKwId(kw.id)}
+                              onMouseLeave={() => setBudgetTooltipKwId(null)}
+                              style={{
+                                color: kw.allocatedBudget > 0 ? '#a8c5b5' : '#5a7a6a',
+                                cursor: 'default',
+                                borderBottom: '1px dashed #3a5a4a',
+                                paddingBottom: 1,
+                              }}
+                            >
+                              {kw.allocatedBudget > 0 ? fmtC(kw.allocatedBudget) : '—'}
+                            </span>
+                            {showBudgetTip && kw.allocatedBudget > 0 && (
+                              <div style={{
+                                position: 'absolute', right: 0, top: '100%', zIndex: 50,
+                                backgroundColor: '#0d1f18', border: `1px solid ${G3}`,
+                                borderRadius: 8, padding: '10px 12px', minWidth: 220,
+                                boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                              }}>
+                                <div style={{ fontSize: 9, color: '#5a7a6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                                  Budget alloué par mois
+                                </div>
+                                {kw.budgetPerMonth.map((b, i) => b > 0 && (
+                                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                    <span style={{ fontSize: 10, color: '#7a9e8e', minWidth: 36 }}>M+{i + 1}</span>
+                                    <div style={{ flex: 1, margin: '0 8px', backgroundColor: G3, borderRadius: 3, height: 4, overflow: 'hidden' }}>
+                                      <div style={{
+                                        height: '100%', borderRadius: 3,
+                                        backgroundColor: ORANGE,
+                                        width: `${Math.round((b / Math.max(...kw.budgetPerMonth)) * 100)}%`,
+                                      }} />
+                                    </div>
+                                    <span style={{ fontSize: 10, color: CREAM, fontWeight: 600, minWidth: 50, textAlign: 'right' }}>{fmtC(b)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          {/* 1er mois avec budget */}
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            {kw.firstMonth !== null ? (
+                              <span style={{
+                                backgroundColor: '#1a2e25', border: `1px solid ${G3}`,
+                                borderRadius: 8, padding: '2px 8px',
+                                fontSize: 10, fontWeight: 700, color: '#7a9e8e',
+                              }}>
+                                M+{kw.firstMonth}
+                              </span>
+                            ) : (
+                              <span style={{ color: '#3a5a4a', fontSize: 10 }}>—</span>
+                            )}
+                          </td>
                         </tr>
                         {isExpanded && (
                           <tr key={`${kw.id}-monthly`} style={{ borderBottom: `1px solid ${G3}`, backgroundColor: '#0d1f18' }}>
-                            <td colSpan={10} style={{ padding: '8px 12px 12px 36px' }}>
+                            <td colSpan={12} style={{ padding: '8px 12px 12px 36px' }}>
                               <div style={{ fontSize: 9, color: '#5a7a6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
                                 Progression de position estimée
                               </div>
                               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                 {kw.monthlyPos.map((p, i) => (
                                   <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-                                    <span style={{ fontSize: 9, color: '#5a7a6a', fontWeight: 600 }}>M+{i + 1}</span>
+                                    <span style={{ fontSize: 9, color: kw.budgetPerMonth[i] > 0 ? ORANGE : '#5a7a6a', fontWeight: 600 }}>M+{i + 1}</span>
                                     <span style={{
                                       backgroundColor: p <= 3 ? ORANGE : p <= 6 ? '#2d7a5e' : p <= 10 ? G3 : '#1a2e25',
                                       borderRadius: 8, padding: '3px 7px',
@@ -1942,6 +2111,9 @@ export default function SimulateurSEO() {
                                     }}>
                                       {p === 11 ? '11+' : `#${p}`}
                                     </span>
+                                    {kw.budgetPerMonth[i] > 0 && (
+                                      <span style={{ fontSize: 8, color: ORANGE }}>{fmtC(kw.budgetPerMonth[i])}</span>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1963,6 +2135,8 @@ export default function SimulateurSEO() {
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: CREAM, fontWeight: 700 }}>{fmtN(totals.totalTraffic)}</td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: CREAM, fontWeight: 700 }}>{fmtLeads(totals.totalLeads)}</td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: ORANGE, fontWeight: 800, fontSize: 14 }}>{fmtC(totals.totalCA)}</td>
+                    <td></td>
+                    <td style={{ padding: '10px 8px', textAlign: 'right', color: '#a8c5b5', fontWeight: 700 }}>{fmtC(kwResults.reduce((s, k) => s + k.allocatedBudget, 0))}</td>
                     <td></td>
                   </tr>
                 </tfoot>
