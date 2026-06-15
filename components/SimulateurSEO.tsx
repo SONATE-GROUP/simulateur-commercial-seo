@@ -583,86 +583,106 @@ export default function SimulateurSEO() {
     });
   }, [kwAllocations, keywords, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing]);
 
+  /* Monthly projection — computed directly from per-keyword monthly positions */
+  const { monthlyData, breakEvenMonth } = useMemo(() => {
+    const monthlyBudget = categories.reduce((s, c) => s + (c.budget ?? 700), 0) * (budgetRatio / 100);
+    const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
+
+    let bev = -1;
+    const data = Array.from({ length: 12 }, (_, i) => {
+      const calMonth = (startMonth + i) % 12;
+      const label = seasonalityEnabled ? MONTH_NAMES[calMonth] : `M${i + 1}`;
+      const seasonal = seasonalityEnabled && highSeasonMonths[calMonth] ? highSeasonMultiplier : 1;
+
+      // Sum across all keywords using their actual position at month i
+      let traffic = 0, leads = 0, ca = 0;
+      kwResults.forEach(kw => {
+        const pm   = kw.monthlyPos[i];
+        const ctrM = (CTR_TABLE[pm] ?? 0) * (budgetRatio / 100);
+        const t    = kw.volume * ctrM * kw.coeff * seasonal;
+        const l    = t * (cr[kw.intention as Intention] / 100);
+        traffic += t;
+        leads   += l;
+        ca      += l * basketValue * leadConv;
+      });
+
+      // kwMultiplier scales "mots clés avec budget activé" → equivalent to scaling all
+      // since keywords without budget contribute 0 (pos 11, CTR 0)
+      traffic *= kwMultiplier;
+      leads   *= kwMultiplier;
+      ca      *= kwMultiplier;
+
+      if (bev === -1 && ca >= monthlyBudget) bev = i + 1;
+      const cplMonth = leads > 0.5 ? Math.round(monthlyBudget / leads) : null;
+      return {
+        month: label,
+        budget: Math.round(monthlyBudget),
+        ca: Math.round(ca),
+        leads: Math.round(leads),
+        traffic: Math.round(traffic),
+        cplMonth,
+        isBev: false,
+      };
+    });
+    if (bev > 0) data[bev - 1].isBev = true;
+    const bevLabel = bev > 0
+      ? (seasonalityEnabled ? MONTH_NAMES[(startMonth + bev - 1) % 12] : `M${bev}`)
+      : null;
+    return { monthlyData: data, breakEvenMonth: bevLabel };
+  }, [kwResults, categories, budgetRatio, businessType, tauxRdv, tauxClosing, basketValue, kwMultiplier, seasonalityEnabled, startMonth, highSeasonMonths, highSeasonMultiplier, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* Totals */
   const totals = useMemo(() => {
-    const rawLeads   = kwResults.reduce((s, k) => s + k.leads, 0);
-    // For lead mode, CA is gated by RDV + closing rates
-    const leadConv   = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
-    const rawCA      = kwResults.reduce((s, k) => s + k.leads * basketValue * leadConv, 0);
-    const totalLeads   = rawLeads   * kwMultiplier;
-    const totalCA      = rawCA      * kwMultiplier;
-    const totalTraffic = kwResults.reduce((s, k) => s + k.traffic, 0) * kwMultiplier;
+    // M+12 monthly rate per keyword (for table footer & funnel)
+    const rawLeads_m12   = kwResults.reduce((s, k) => s + k.leads, 0);
+    const rawCA_m12      = kwResults.reduce((s, k) => s + k.ca, 0);
+    const totalLeads     = rawLeads_m12 * kwMultiplier;
+    const totalCA_m12    = rawCA_m12    * kwMultiplier; // monthly rate at full maturity
+    const totalTraffic   = kwResults.reduce((s, k) => s + k.traffic, 0) * kwMultiplier;
+
+    // Annual sums from actual monthly projection (integrates gradual budget activation)
+    const totalCA_annual   = monthlyData.reduce((s, m) => s + m.ca,      0);
+    const totalLeads_annual = monthlyData.reduce((s, m) => s + m.leads,   0);
+
+    // CA exposed to visitors = what they see in the table (M+12 monthly rate)
+    const totalCA = totalCA_m12;
+
     const totalImpressions = keywords.reduce((s, k) => s + k.volume, 0) * kwMultiplier;
     const topics    = new Set(keywords.map(k => k.topic).filter(Boolean));
     const nbPages   = (topics.size || keywords.length) * kwMultiplier;
     const nbKeywords = keywords.length * kwMultiplier;
     const budgetMensuel = categories.reduce((s, c) => s + (c.budget ?? 700), 0) * (budgetRatio / 100);
-    const budgetTotal  = budgetMensuel * 12;
-    const roi1an       = budgetTotal > 0 ? ((totalCA * 5.83 - budgetTotal) / budgetTotal) * 100 : 0;
-    const roiMult1an   = budgetTotal > 0 ? (totalCA * 5.83) / budgetTotal : 0;
-    const roi2ans      = budgetTotal > 0 ? ((totalCA * 18.5 - budgetTotal) / budgetTotal) * 100 : 0;
-    const roiMult      = budgetTotal > 0 ? (totalCA * 18.5) / budgetTotal : 0;
-    // Extra lead-mode values (unscaled, for funnel display)
-    const baseLeads  = rawLeads;
-    const baseRdv    = baseLeads * (tauxRdv / 100);
-    const baseClosing = baseRdv * (tauxClosing / 100);
-    return { totalCA, totalLeads, totalTraffic, totalImpressions, nbPages, nbKeywords, budgetMensuel, budgetTotal, roi1an, roiMult1an, roi2ans, roiMult, baseLeads, baseRdv, baseClosing };
-  }, [kwResults, keywords, categories, budgetRatio, kwMultiplier, businessType, tauxRdv, tauxClosing, basketValue]);
+    const budgetTotal   = budgetMensuel * 12;
 
-  /* Monthly projection */
-  const { monthlyData, breakEvenMonth } = useMemo(() => {
-    const { totalCA, budgetMensuel, budgetTotal } = totals;
-    const monthlyBudget = budgetMensuel;
+    // ROI year 1 = annual sum of graduated months; year 2 = year1 + full maturity × 12
+    const totalCA_2ans  = totalCA_annual + 12 * totalCA_m12;
+    const roi1an     = budgetTotal > 0 ? ((totalCA_annual - budgetTotal) / budgetTotal) * 100 : 0;
+    const roiMult1an = budgetTotal > 0 ? totalCA_annual / budgetTotal : 0;
+    const roi2ans    = budgetTotal > 0 ? ((totalCA_2ans  - budgetTotal) / budgetTotal) * 100 : 0;
+    const roiMult    = budgetTotal > 0 ? totalCA_2ans  / budgetTotal : 0;
 
-    // Build seasonal weights (one per campaign month, mapped to calendar months)
-    let weights: number[];
-    if (seasonalityEnabled) {
-      weights = Array.from({ length: 12 }, (_, i) => {
-        const calMonth = (startMonth + i) % 12;
-        return highSeasonMonths[calMonth] ? highSeasonMultiplier : 1;
-      });
-    } else {
-      weights = Array(12).fill(1);
-    }
+    // Funnel (unscaled M+12 monthly rate)
+    const baseLeads   = rawLeads_m12;
+    const baseRdv     = baseLeads * (tauxRdv / 100);
+    const baseClosing = baseRdv   * (tauxClosing / 100);
 
-    // Use the ramp-up curve (same as the histogram) to distribute monthly CA & leads
-    const { totalLeads } = totals;
-    // Closed clients per month at full maturity (fractional)
-    const closedLeadsAtMaturity = basketValue > 0 ? totalCA / basketValue : 0;
-    // Accumulate fractional clients to assign whole-client CA in the right months
-    let cumulativeClients = 0;
-    let intClientsSoFar = 0;
-    let bev = -1;
-    const data = Array.from({ length: 12 }, (_, i) => {
-      const m = i + 1;
-      const calMonth = (startMonth + i) % 12;
-      const label = seasonalityEnabled ? MONTH_NAMES[calMonth] : `M${m}`;
-      const rampPct = RAMP_UP_DATA[i].pct / 100;
-      const leads = totalLeads * rampPct * weights[i];
-      cumulativeClients += closedLeadsAtMaturity * rampPct * weights[i];
-      const newIntClients = Math.floor(cumulativeClients) - intClientsSoFar;
-      intClientsSoFar = Math.floor(cumulativeClients);
-      const ca = newIntClients * basketValue;
-      // Break-even = first month where monthly CA covers monthly budget cost
-      if (bev === -1 && ca >= monthlyBudget) bev = m;
-      const cplMonth = leads > 0.5 ? Math.round(monthlyBudget / leads) : null;
-      return { month: label, budget: Math.round(monthlyBudget), ca: Math.round(ca), leads: Math.round(leads), cplMonth, isBev: bev === m };
-    });
-    const bevLabel = bev > 0
-      ? (seasonalityEnabled ? MONTH_NAMES[(startMonth + bev - 1) % 12] : `M${bev}`)
-      : null;
-    return { monthlyData: data, breakEvenMonth: bevLabel };
-  }, [totals, basketValue, seasonalityEnabled, startMonth, highSeasonMonths, highSeasonMultiplier]);
+    return {
+      totalCA, totalLeads, totalTraffic, totalImpressions, nbPages, nbKeywords,
+      budgetMensuel, budgetTotal, roi1an, roiMult1an, roi2ans, roiMult,
+      baseLeads, baseRdv, baseClosing,
+      totalCA_annual, totalLeads_annual, totalCA_m12,
+    };
+  }, [kwResults, monthlyData, keywords, categories, budgetRatio, kwMultiplier, businessType, tauxRdv, tauxClosing, basketValue]);
 
   /* CPL */
   const cpl = useMemo(() => {
-    const { totalLeads: tl, budgetTotal: bt } = totals;
-    const safe = tl > 0.001 ? tl : 0.001;
+    const { totalLeads_annual: tl, budgetTotal: bt } = totals;
+    const safe = (tl ?? 0) > 0.001 ? (tl ?? 0) : 0.001;
     return {
-      an1: bt / (safe * 6.5),
-      an2: bt / (safe * 18.5),
-      an3: bt / (safe * 30.5),
-      an5: bt / (safe * 54.5),
+      an1: bt / safe,
+      an2: bt / (safe + 12 * (totals.totalLeads)),
+      an3: bt / (safe + 24 * (totals.totalLeads)),
+      an5: bt / (safe + 48 * (totals.totalLeads)),
     };
   }, [totals]);
 
@@ -1701,10 +1721,10 @@ export default function SimulateurSEO() {
                 CA Prévisionnel / An
               </div>
               <div style={{ color: ORANGE, fontSize: 40, fontWeight: 800, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-                {fmtC(totals.totalCA * 12)}
+                {fmtC(totals.totalCA_annual)}
               </div>
               <div style={{ color: '#5a7a6a', fontSize: 12, marginTop: 8 }}>
-                à partir de 12 mois de prestation
+                somme des 12 mois de montée en puissance
               </div>
             </div>
 
