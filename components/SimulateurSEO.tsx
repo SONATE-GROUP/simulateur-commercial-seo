@@ -370,6 +370,12 @@ export default function SimulateurSEO() {
   const [saveState, setSaveState]     = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [reportId, setReportId]       = useState<string | null>(null);
   const [openCats, setOpenCats] = useState<Set<string>>(new Set(['cat1', 'cat2']));
+  const [expandedKws, setExpandedKws] = useState<Set<string>>(new Set());
+  const toggleKwExpand = (id: string) => setExpandedKws(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
   const [workspaces, setWorkspaces]   = useState<{ id: string; name: string; role: string }[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>('');
   const resultsRef  = useRef<HTMLDivElement>(null);
@@ -451,13 +457,17 @@ export default function SimulateurSEO() {
       const denom       = 225 * da * (coeffSante / 70) * Math.sqrt(nbKws) * logBudget;
       const posRaw      = denom > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / denom : 100;
       const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
+      // Monthly position progression M+1..M+12: authority grows with ramp-up curve
+      const monthlyPos = RAMP_UP_DATA.map(({ pct }) =>
+        Math.min(Math.max(Math.round(posRaw / (pct / 100)), 1), 11)
+      );
       const baseCtr = CTR_TABLE[pos] ?? 0;
       const ctr    = baseCtr * (budgetRatio / 100);
       const traffic = kw.volume * ctr * stats.coeff;
       const leads  = traffic * (cr[kw.intention as Intention] / 100);
       const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
       const ca     = leads * basketValue * leadConv;
-      return { ...kw, pos, ctr, traffic, leads, ca, coeff: stats.coeff };
+      return { ...kw, pos, monthlyPos, ctr, traffic, leads, ca, coeff: stats.coeff };
     });
   }, [keywords, categories, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing]);
 
@@ -1839,11 +1849,12 @@ export default function SimulateurSEO() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${G3}` }}>
+                    <th style={{ padding: '6px 4px', width: 24 }}></th>
                     {[
                       { label: 'Mot clé / Sujet', align: 'left'   },
                       { label: 'Volume',           align: 'right'  },
                       { label: 'Diff.',            align: 'center' },
-                      { label: 'Position',         align: 'center' },
+                      { label: 'Position M+12',    align: 'center' },
                       { label: 'CTR',              align: 'center' },
                       { label: 'Trafic / mois',    align: 'right'  },
                       { label: businessType === 'ecommerce' ? 'Ventes / mois' : 'Leads / mois', align: 'right' },
@@ -1860,46 +1871,90 @@ export default function SimulateurSEO() {
                   </tr>
                 </thead>
                 <tbody>
-                  {kwResults.map(kw => (
-                    <tr key={kw.id} style={{ borderBottom: `1px solid ${G3}` }}>
-                      <td style={{ padding: '8px 8px 8px 4px' }}>
-                        <div style={{ color: CREAM, fontWeight: 500 }}>{kw.keyword || <em style={{ color: '#5a7a6a' }}>—</em>}</div>
-                        {kw.topic && <div style={{ color: '#7a9e8e', fontSize: 10, marginTop: 2 }}>{kw.topic}</div>}
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: '#a8c5b5' }}>{fmtN(kw.volume)}</td>
-                      <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>{kw.difficulty}</td>
-                      <td style={{ padding: '8px', textAlign: 'center' }}>
-                        <span style={{
-                          backgroundColor: kw.pos <= 3 ? ORANGE : kw.pos <= 6 ? '#2d7a5e' : G3,
-                          borderRadius: 10, padding: '2px 9px',
-                          fontSize: 11, fontWeight: 700, color: 'white',
-                        }}>
-                          {kw.pos === 11 ? '11+' : `#${kw.pos}`}
-                        </span>
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>
-                        {fmtP(kw.ctr * 100)}
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: CREAM }}>{fmtN(kw.traffic)}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: CREAM }}>{kw.leads.toFixed(2)}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: ORANGE, fontWeight: 600 }}>{fmtC(kw.ca)}</td>
-                      <td style={{ padding: '8px', textAlign: 'center' }}>
-                        <span style={{
-                          backgroundColor: `${INTENT_COLOR[kw.intention]}22`,
-                          border: `1px solid ${INTENT_COLOR[kw.intention]}88`,
-                          borderRadius: 10, padding: '2px 8px',
-                          fontSize: 10, fontWeight: 600,
-                          color: INTENT_COLOR[kw.intention],
-                          whiteSpace: 'nowrap',
-                        }}>
-                          {INTENT_LABEL[kw.intention]}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {kwResults.map(kw => {
+                    const isExpanded = expandedKws.has(kw.id);
+                    return (
+                      <>
+                        <tr key={kw.id} style={{ borderBottom: isExpanded ? 'none' : `1px solid ${G3}` }}>
+                          <td style={{ padding: '8px 4px', textAlign: 'center' }}>
+                            <button
+                              onClick={() => toggleKwExpand(kw.id)}
+                              style={{
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                color: '#5a7a6a', fontSize: 10, padding: '2px 4px',
+                                lineHeight: 1, borderRadius: 4,
+                              }}
+                              title={isExpanded ? 'Masquer la progression' : 'Voir la progression M+1 à M+12'}
+                            >
+                              {isExpanded ? '▲' : '▼'}
+                            </button>
+                          </td>
+                          <td style={{ padding: '8px 8px 8px 4px' }}>
+                            <div style={{ color: CREAM, fontWeight: 500 }}>{kw.keyword || <em style={{ color: '#5a7a6a' }}>—</em>}</div>
+                            {kw.topic && <div style={{ color: '#7a9e8e', fontSize: 10, marginTop: 2 }}>{kw.topic}</div>}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#a8c5b5' }}>{fmtN(kw.volume)}</td>
+                          <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>{kw.difficulty}</td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            <span style={{
+                              backgroundColor: kw.pos <= 3 ? ORANGE : kw.pos <= 6 ? '#2d7a5e' : G3,
+                              borderRadius: 10, padding: '2px 9px',
+                              fontSize: 11, fontWeight: 700, color: 'white',
+                            }}>
+                              {kw.pos === 11 ? '11+' : `#${kw.pos}`}
+                            </span>
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>
+                            {fmtP(kw.ctr * 100)}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: CREAM }}>{fmtN(kw.traffic)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: CREAM }}>{kw.leads.toFixed(2)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: ORANGE, fontWeight: 600 }}>{fmtC(kw.ca)}</td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            <span style={{
+                              backgroundColor: `${INTENT_COLOR[kw.intention]}22`,
+                              border: `1px solid ${INTENT_COLOR[kw.intention]}88`,
+                              borderRadius: 10, padding: '2px 8px',
+                              fontSize: 10, fontWeight: 600,
+                              color: INTENT_COLOR[kw.intention],
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {INTENT_LABEL[kw.intention]}
+                            </span>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr key={`${kw.id}-monthly`} style={{ borderBottom: `1px solid ${G3}`, backgroundColor: '#0d1f18' }}>
+                            <td colSpan={10} style={{ padding: '8px 12px 12px 36px' }}>
+                              <div style={{ fontSize: 9, color: '#5a7a6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                                Progression de position estimée
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {kw.monthlyPos.map((p, i) => (
+                                  <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                                    <span style={{ fontSize: 9, color: '#5a7a6a', fontWeight: 600 }}>M+{i + 1}</span>
+                                    <span style={{
+                                      backgroundColor: p <= 3 ? ORANGE : p <= 6 ? '#2d7a5e' : p <= 10 ? G3 : '#1a2e25',
+                                      borderRadius: 8, padding: '3px 7px',
+                                      fontSize: 11, fontWeight: 700, color: p === 11 ? '#5a7a6a' : 'white',
+                                      border: p === 11 ? `1px solid ${G3}` : 'none',
+                                      minWidth: 32, textAlign: 'center',
+                                    }}>
+                                      {p === 11 ? '11+' : `#${p}`}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr style={{ borderTop: `2px solid ${G3}` }}>
+                    <td></td>
                     <td style={{ padding: '10px 8px', color: CREAM, fontWeight: 700 }}>Total</td>
                     <td></td>
                     <td></td>
