@@ -17,7 +17,9 @@ export async function GET() {
   const res = await db.execute(`
     SELECT u.id, u.email, u.name, u.is_global_admin, u.created_at,
            u.first_login_at, u.last_login_at, u.login_count,
-           COUNT(wm.workspace_id) as workspace_count
+           COUNT(wm.workspace_id) as workspace_count,
+           COALESCE(u.total_time_seconds, 0) as total_time_seconds,
+           COALESCE(u.interaction_count, 0) as interaction_count
     FROM users u
     LEFT JOIN workspace_members wm ON wm.user_id = u.id
     GROUP BY u.id
@@ -27,6 +29,7 @@ export async function GET() {
     id: r[0], email: r[1], name: r[2], isGlobalAdmin: Boolean(r[3]), createdAt: r[4],
     firstLoginAt: r[5] ?? null, lastLoginAt: r[6] ?? null, loginCount: r[7] ?? 0,
     workspaceCount: Number(r[8]) ?? 0,
+    totalTimeSeconds: Number(r[9]) || 0, interactionCount: Number(r[10]) || 0,
   })));
 }
 
