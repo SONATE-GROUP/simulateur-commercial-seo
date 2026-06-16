@@ -1663,13 +1663,14 @@ export default function SimulateurSEO() {
                     label="Total mensuel"
                     value={Math.round(categories.reduce((s, c) => s + (c.budget ?? 700), 0) * (budgetRatio / 100))}
                     min={0}
-                    max={Math.max(20000, Math.round(categories.reduce((s, c) => s + (c.budget ?? 700), 0) * (budgetRatio / 100) * 2 / 1000) * 1000)}
+                    max={20000}
                     step={100}
                     unit="€"
                     hint="Répartition proportionnelle entre les thématiques"
                     bold
-                    onChange={targetTotal => {
+                    onChange={rawTargetTotal => {
                       if (categories.length === 0) return;
+                      const targetTotal = Math.min(rawTargetTotal, 20000);
                       const rawSum = categories.reduce((s, c) => s + (c.budget ?? 700), 0);
                       const targetRawSum = budgetRatio > 0 ? targetTotal / (budgetRatio / 100) : 0;
                       if (rawSum === 0) {
