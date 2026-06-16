@@ -508,15 +508,30 @@ export default function SimulateurSEO() {
       .catch(() => { /* ignore */ });
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Track time spent + interactions on a saved report (periodic heartbeat + flush on leave) */
+  /* Keep a live ref to reportId so the engagement tracker below doesn't need to restart
+     (and lose its pending counters) every time a report gets saved/loaded */
+  const reportIdRef = useRef<string | null>(null);
+  useEffect(() => { reportIdRef.current = reportId; }, [reportId]);
+
+  /* Track time spent + interactions for the whole session (periodic heartbeat + flush on
+     leave), as soon as the user is logged in — whether or not a report is open/saved.
+     When a report is open, the same numbers are also added to that report's totals. */
   useEffect(() => {
-    if (!reportId) return;
+    if (!session?.user?.id) return;
     let lastTick = Date.now();
     let pendingInteractions = 0;
 
     const onInteraction = () => { pendingInteractions++; };
     document.addEventListener('click', onInteraction);
     document.addEventListener('input', onInteraction);
+
+    const post = (url: string, body: string, useBeacon: boolean) => {
+      if (useBeacon && navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+      } else {
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => { /* ignore */ });
+      }
+    };
 
     const flush = (useBeacon: boolean) => {
       const now = Date.now();
@@ -527,12 +542,8 @@ export default function SimulateurSEO() {
       if (seconds <= 0 && interactions === 0) return;
 
       const body = JSON.stringify({ seconds, interactions });
-      const url = `/api/reports/${reportId}/engagement`;
-      if (useBeacon && navigator.sendBeacon) {
-        navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
-      } else {
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => { /* ignore */ });
-      }
+      post('/api/users/me/engagement', body, useBeacon);
+      if (reportIdRef.current) post(`/api/reports/${reportIdRef.current}/engagement`, body, useBeacon);
     };
 
     const interval = setInterval(() => flush(false), 30000);
@@ -547,7 +558,7 @@ export default function SimulateurSEO() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       flush(true);
     };
-  }, [reportId]);
+  }, [session?.user?.id]);
 
   /* Budget allocation per keyword over 12 months (sudoku-style) */
   const kwAllocations = useMemo(() => {

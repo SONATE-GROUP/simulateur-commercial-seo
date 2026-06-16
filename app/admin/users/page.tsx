@@ -15,6 +15,16 @@ interface User {
   id: string; email: string; name: string; isGlobalAdmin: boolean;
   createdAt: string; firstLoginAt?: string | null; lastLoginAt?: string | null;
   loginCount?: number; workspaceCount?: number;
+  totalTimeSeconds?: number; interactionCount?: number;
+}
+
+function fmtDuration(totalSeconds: number) {
+  if (!totalSeconds || totalSeconds <= 0) return '-';
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.round((totalSeconds % 3600) / 60);
+  if (h > 0) return `${h} h ${m} min`;
+  if (m > 0) return `${m} min`;
+  return `${totalSeconds} s`;
 }
 interface AccessWorkspace {
   id: string; name: string; role: string;
@@ -277,12 +287,12 @@ export default function UsersPage() {
           <div style={{ backgroundColor: G5, borderRadius: 12, padding: '48px 32px', textAlign: 'center', color: '#7a9e8e', fontSize: 15, border: `1px solid ${G3}` }}>Aucun utilisateur.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 130px 72px 100px 100px 80px 80px', gap: 10, padding: '4px 16px', color: '#5a7a6a', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              <span>Nom</span><span>Email</span><span>Rôle</span><span>Espaces</span><span>1re cnx</span><span>Dernière cnx</span><span>Cnx</span><span></span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 130px 72px 100px 100px 80px 90px 90px 80px', gap: 10, padding: '4px 16px', color: '#5a7a6a', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              <span>Nom</span><span>Email</span><span>Rôle</span><span>Espaces</span><span>1re cnx</span><span>Dernière cnx</span><span>Cnx</span><span title="Temps passé total dans le simulateur">Temps passé</span><span title="Nombre d'interactions (clics, saisies)">Interactions</span><span></span>
             </div>
             {users.map(u => (
               <div key={u.id}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 130px 72px 100px 100px 80px 80px', gap: 10, alignItems: 'center', backgroundColor: G5, borderRadius: expandedUser === u.id ? '10px 10px 0 0' : 10, padding: '12px 16px', border: `1px solid ${expandedUser === u.id ? G4 : G3}` }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 130px 72px 100px 100px 80px 90px 90px 80px', gap: 10, alignItems: 'center', backgroundColor: G5, borderRadius: expandedUser === u.id ? '10px 10px 0 0' : 10, padding: '12px 16px', border: `1px solid ${expandedUser === u.id ? G4 : G3}` }}>
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{u.name || <span style={{ color: '#5a7a6a', fontStyle: 'italic' }}>-</span>}</span>
                   <span style={{ color: '#7a9e8e', fontSize: 12 }}>{u.email}</span>
                   <span>
@@ -298,6 +308,8 @@ export default function UsersPage() {
                   <span style={{ fontSize: 11, color: u.firstLoginAt ? '#7a9e8e' : '#e05050', fontStyle: u.firstLoginAt ? 'normal' : 'italic' }}>{u.firstLoginAt ? fmt(u.firstLoginAt) : 'Jamais connecté'}</span>
                   <span style={{ fontSize: 11, color: u.lastLoginAt ? '#7a9e8e' : '#5a7a6a' }}>{fmt(u.lastLoginAt)}</span>
                   <span style={{ fontSize: 11, color: (u.loginCount ?? 0) > 0 ? '#7a9e8e' : '#5a7a6a', textAlign: 'center' }}>{u.loginCount ?? 0}</span>
+                  <span style={{ fontSize: 11, color: (u.totalTimeSeconds ?? 0) > 0 ? '#7a9e8e' : '#5a7a6a' }}>{fmtDuration(u.totalTimeSeconds ?? 0)}</span>
+                  <span style={{ fontSize: 11, color: (u.interactionCount ?? 0) > 0 ? '#7a9e8e' : '#5a7a6a', textAlign: 'center' }}>{u.interactionCount ?? 0}</span>
                   <div>
                     {u.id !== session?.user?.id && (
                       <button onClick={() => deleteUser(u.id, u.name || u.email)} style={{ backgroundColor: 'transparent', border: '1px solid #e05050', borderRadius: 6, padding: '4px 10px', color: '#e05050', fontSize: 11, cursor: 'pointer' }}>Supprimer</button>
