@@ -88,15 +88,19 @@ const INTENT_COLOR: Record<number, string> = {
 
 // Budget → "ranking power" curve: weak effect on the first euros spent on a
 // keyword, then accelerates as more keywords in the same category get budget
-// (topical authority synergy).
+// (topical authority synergy). The damping factor fades in smoothly so early
+// spend is softened without being multiplied away entirely — otherwise
+// low-DA sites never accumulate enough effective budget to leave the
+// worst-rank zone and the whole simulation reports 0 traffic/CA.
 const BUDGET_THRESH   = 150;  // € — diminishing-returns threshold for early spend
-const BUDGET_EXP      = 1.6;  // >1 → early € count less, later € count more
+const BUDGET_DAMP_EXP = 0.5;  // <1 → damping fades in gradually as budget grows
 const ACCEL_PER_KW    = 0.25; // synergy boost per extra funded keyword in category
 function computeLogBudget(cumBudget: number, nbActiveInCat: number): number {
   if (cumBudget <= 0) return 0;
   const synergy   = 1 + ACCEL_PER_KW * Math.max(0, nbActiveInCat - 1);
   const effBudget = cumBudget * synergy;
-  return Math.log(1 + Math.pow(effBudget / BUDGET_THRESH, BUDGET_EXP) / 20);
+  const damping   = Math.pow(effBudget / (effBudget + BUDGET_THRESH), BUDGET_DAMP_EXP);
+  return Math.log(1 + effBudget / 20) * damping;
 }
 
 // Piecewise-linear coefficient from the Semrush Health Score:
