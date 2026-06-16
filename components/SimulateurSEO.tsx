@@ -1424,7 +1424,7 @@ export default function SimulateurSEO() {
                     <div style={{ overflowX: 'auto', padding: '4px 10px 8px' }}>
                       {catKws.length === 0 ? (
                         <div style={{ color: L_MED, fontSize: 11, padding: '8px 0', textAlign: 'center' }}>
-                          Aucun mot-clé — cliquez sur "+ Ajouter" ou{' '}
+                          Aucun mot-clé : cliquez sur "+ Ajouter" ou{' '}
                           <button
                             onClick={() => addKw(cat.id)}
                             style={{ background: 'none', border: 'none', color: ORANGE, cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: 0, textDecoration: 'underline' }}
@@ -1903,8 +1903,8 @@ export default function SimulateurSEO() {
                       { label: caLabel,          value: fmtC(totalCA * mult),           active: true },
                     ]}
                     rates={[
-                      imp   > 0 ? `↓ ${fmtP(traf / imp * 100)}`         : '—',
-                      traf  > 0 ? `↓ ${fmtP(baseLeads / traf * 100)}`   : '—',
+                      imp   > 0 ? `↓ ${fmtP(traf / imp * 100)}`         : '-',
+                      traf  > 0 ? `↓ ${fmtP(baseLeads / traf * 100)}`   : '-',
                       `↓ ${tauxRdv}%`,
                       `↓ ${tauxClosing}%`,
                       `× ${basketValue}€`,
@@ -1921,8 +1921,8 @@ export default function SimulateurSEO() {
                     { label: caLabel,        value: fmtC(totalCA * mult),        active: true },
                   ]}
                   rates={[
-                    imp  > 0 ? `↓ ${fmtP(traf / imp * 100)}`        : '—',
-                    traf > 0 ? `↓ ${fmtP(baseLeads / traf * 100)}`  : '—',
+                    imp  > 0 ? `↓ ${fmtP(traf / imp * 100)}`        : '-',
+                    traf > 0 ? `↓ ${fmtP(baseLeads / traf * 100)}`  : '-',
                     `× ${basketValue}€`,
                   ]}
                 />
@@ -1946,7 +1946,7 @@ export default function SimulateurSEO() {
           {/* BLOC 4 — MONTHLY PROJECTION */}
           <div style={card}>
             <div style={{ ...secTitle, marginBottom: 16 }}>
-              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Projection mensuelle — 12 mois
+              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Projection mensuelle : 12 mois
               {seasonalityEnabled && (
                 <span style={{ background: '#3b82f622', border: '1px solid #3b82f644', borderRadius: 4, padding: '2px 8px', fontSize: 10, color: '#3b82f6', fontWeight: 400 }}>
                   Saisonnalité active
@@ -1990,7 +1990,7 @@ export default function SimulateurSEO() {
           {/* BLOC 4b — LEADS PAR MOIS */}
           <div style={{ marginBottom: 14 }}>
             <div style={{ ...secTitle, marginBottom: 10 }}>
-              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> {businessType === 'ecommerce' ? 'Évolution du CPA (coût d\'acquisition)' : 'Leads captés par mois'} — 12 mois
+              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> {businessType === 'ecommerce' ? 'Évolution du CPA (coût d\'acquisition)' : 'Leads captés par mois'} : 12 mois
             </div>
             <ResponsiveContainer width="100%" height={220}>
               <ComposedChart data={monthlyData} margin={{ top: 8, right: 48, left: 0, bottom: 4 }}>
@@ -2024,7 +2024,7 @@ export default function SimulateurSEO() {
           {/* BLOC 4c — MONTÉE EN PUISSANCE */}
           <div style={{ marginBottom: 14 }}>
             <div style={{ ...secTitle, marginBottom: 4 }}>
-              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Montée en puissance SEO/GEO — 1ère année
+              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Montée en puissance SEO/GEO : 1ère année
             </div>
             <div style={{ color: '#5a7a6a', fontSize: 11, marginBottom: 12 }}>
               Les premiers résultats apparaissent à partir du 4ème mois (indexation + premières positions), avec une accélération à 6 mois.
@@ -2117,7 +2117,7 @@ export default function SimulateurSEO() {
                             </button>
                           </td>
                           <td style={{ padding: '8px 8px 8px 4px' }}>
-                            <div style={{ color: CREAM, fontWeight: 500 }}>{kw.keyword || <em style={{ color: '#5a7a6a' }}>—</em>}</div>
+                            <div style={{ color: CREAM, fontWeight: 500 }}>{kw.keyword || <em style={{ color: '#5a7a6a' }}>-</em>}</div>
                             {kw.topic && <div style={{ color: '#7a9e8e', fontSize: 10, marginTop: 2 }}>{kw.topic}</div>}
                           </td>
                           <td style={{ padding: '8px', textAlign: 'right', color: '#a8c5b5' }}>{fmtN(kw.volume)}</td>
@@ -2161,7 +2161,7 @@ export default function SimulateurSEO() {
                                 paddingBottom: 1,
                               }}
                             >
-                              {kw.allocatedBudget > 0 ? fmtC(kw.allocatedBudget) : '—'}
+                              {kw.allocatedBudget > 0 ? fmtC(kw.allocatedBudget) : '-'}
                             </span>
                             {showBudgetTip && kw.allocatedBudget > 0 && (
                               <div style={{
@@ -2200,7 +2200,7 @@ export default function SimulateurSEO() {
                                 M+{kw.firstMonth}
                               </span>
                             ) : (
-                              <span style={{ color: '#3a5a4a', fontSize: 10 }}>—</span>
+                              <span style={{ color: '#3a5a4a', fontSize: 10 }}>-</span>
                             )}
                           </td>
                         </tr>
