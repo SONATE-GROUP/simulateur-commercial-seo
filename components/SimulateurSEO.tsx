@@ -495,7 +495,6 @@ export default function SimulateurSEO() {
   /* Budget allocation per keyword over 12 months (sudoku-style) */
   const kwAllocations = useMemo(() => {
     const CHUNK = 200; // € per allocation step
-    const CATEGORY_ANNUAL_CAP = 20000; // € max alloué par catégorie sur l'année
     const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
     const coeffSante = Math.max(0.01, computeHealthCoeff(healthScore));
 
@@ -565,9 +564,7 @@ export default function SimulateurSEO() {
 
         let remaining = monthly;
         while (remaining > 0) {
-          const capRemaining = CATEGORY_ANNUAL_CAP - catSpent[cat.id];
-          if (capRemaining <= 0) break; // annual cap reached for this category
-          const chunk = Math.min(CHUNK, remaining, capRemaining);
+          const chunk = Math.min(CHUNK, remaining);
           const nbActiveInCat = Math.max(1, catActiveCount[cat.id]);
           // Find keyword with highest potential given current cumulative budgets
           let bestKw: Keyword | null = null;
