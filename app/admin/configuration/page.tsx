@@ -74,13 +74,28 @@ export default function ConfigurationPage() {
 
       <SectionCard title="Formule de position par mot-clé" description="Calcule la position estimée dans les résultats de recherche pour chaque mot-clé, en fonction du budget, de l'autorité de domaine et de la santé technique du site.">
         <FormulaBlock
-          formula={`coeffSante   = max(0.01, healthScore / 80)\nbudgetParKw  = budgetCategorie / nombreMotsClésCatégorie\nlogBudget    = ln(1 + max(0, budgetParKw) / 20)\ndénominateur = 225 × DA × (coeffSante / 70) × √(nbMotsClés) × logBudget\nposRaw       = (difficulté^1.9 × facteurProximité) / dénominateur\nposition     = clamp(round(posRaw), 1, 11)`}
-          legend="DA = Domain Authority (1–100). Position 11 = hors top 10 (trafic nul). Le coefficient de santé pénalise les sites avec un score Semrush faible."
+          formula={`coeffSante      = max(0.01, healthScore / 80)
+budgetCumulé    = budget réellement alloué au mot-clé
+freinBudget     = (budgetCumulé / (budgetCumulé + 5000))^3
+accelCatégorie  = min(12, 1 + 1.25 × (motsClésAvecBudget − 1))
+logBudget       = (ln(1 + budgetCumulé / 20) × freinBudget × accelCatégorie) / 4
+dénominateur    = 225 × DA × (coeffSante / 70) × √(nbMotsClés) × logBudget
+posRaw          = (difficulté^1.9 × facteurProximité) / dénominateur
+position        = clamp(round(posRaw), 1, 11)`}
+          legend="DA = Domain Authority (1–100). Position 11 = hors top 10 (trafic nul). Les petits budgets sont très fortement freinés ; l'allocation teste des paliers 100€, 200€, 300€ jusqu'au budget disponible avant de proposer une hausse mensuelle discrète pour le prochain palier CTR."
         />
         <div style={{ marginTop: 16 }}>
           <p style={{ fontSize: 12, color: MUTED, marginBottom: 8 }}>Constantes de la formule :</p>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            {[{ label: 'Multiplicateur de base', value: '225' }, { label: 'Diviseur santé', value: '70' }, { label: 'Exposant difficulté', value: '1.9' }, { label: 'Diviseur log budget', value: '20' }].map(({ label, value }) => (
+            {[
+              { label: 'Multiplicateur de base', value: '225' },
+              { label: 'Diviseur santé', value: '70' },
+              { label: 'Exposant difficulté', value: '1.9' },
+              { label: 'Frein petits budgets', value: '5000 € ^ 3' },
+              { label: 'Accélération catégorie', value: '1.25 × mots-clés' },
+              { label: 'Plafond accélération', value: '12×' },
+              { label: 'Division impact budget', value: '÷ 4' },
+            ].map(({ label, value }) => (
               <div key={label} style={{ backgroundColor: G5, borderRadius: 8, padding: '10px 16px', fontSize: 13, flex: '1 1 160px' }}>
                 <div style={{ color: MUTED, fontSize: 11, marginBottom: 4 }}>{label}</div>
                 <div style={{ fontWeight: 700, color: ORANGE, fontFamily: 'monospace', fontSize: 16 }}>{value}</div>

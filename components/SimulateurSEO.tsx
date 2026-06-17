@@ -86,21 +86,22 @@ const INTENT_COLOR: Record<number, string> = {
   1: '#e8571a', 2: '#f59e0b', 3: '#3b82f6', 4: '#6b7280',
 };
 
-// Budget → "ranking power" curve: weak effect on the first euros spent on a
-// keyword, then accelerates as more keywords in the same category get budget
-// (topical authority synergy). The damping factor fades in smoothly so early
-// spend is softened without being multiplied away entirely — otherwise
-// low-DA sites never accumulate enough effective budget to leave the
-// worst-rank zone and the whole simulation reports 0 traffic/CA.
-const BUDGET_THRESH   = 150;  // € — diminishing-returns threshold for early spend
-const BUDGET_DAMP_EXP = 0.5;  // <1 → damping fades in gradually as budget grows
-const ACCEL_PER_KW    = 0.25; // synergy boost per extra funded keyword in category
+// Budget → "ranking power" curve: the first euros spent on a keyword are
+// intentionally under-powered, then the curve accelerates once the category
+// has several keywords with budget. This avoids unrealistic early jumps in
+// ranking while rewarding topical authority built by treating a cluster.
+const BUDGET_THRESH      = 5000; // € — high traction threshold to prevent small-budget top ranks
+const BUDGET_DAMP_EXP    = 3;    // >1 → very strong damping before enough budget is accumulated
+const ACCEL_PER_KW       = 1.25; // synergy boost per extra funded keyword in category
+const ACCEL_KW_EXP       = 1.0;  // linear cluster coverage: safer than explosive acceleration
+const MAX_CATEGORY_ACCEL = 12;   // cap calibrated so broad top ranks require ~5k€/month
+const BUDGET_IMPACT_DIVISOR = 4; // global reduction of budget impact on positions
 function computeLogBudget(cumBudget: number, nbActiveInCat: number): number {
   if (cumBudget <= 0) return 0;
-  const synergy   = 1 + ACCEL_PER_KW * Math.max(0, nbActiveInCat - 1);
-  const effBudget = cumBudget * synergy;
-  const damping   = Math.pow(effBudget / (effBudget + BUDGET_THRESH), BUDGET_DAMP_EXP);
-  return Math.log(1 + effBudget / 20) * damping;
+  const activeBoost = Math.pow(Math.max(0, nbActiveInCat - 1), ACCEL_KW_EXP);
+  const categoryAccel = Math.min(MAX_CATEGORY_ACCEL, 1 + ACCEL_PER_KW * activeBoost);
+  const damping = Math.pow(cumBudget / (cumBudget + BUDGET_THRESH), BUDGET_DAMP_EXP);
+  return (Math.log(1 + cumBudget / 20) * damping * categoryAccel) / BUDGET_IMPACT_DIVISOR;
 }
 
 // Piecewise-linear coefficient from the Semrush Health Score:
@@ -563,6 +564,7 @@ export default function SimulateurSEO() {
   /* Budget allocation per keyword over 12 months (sudoku-style) */
   const kwAllocations = useMemo(() => {
     const CHUNK = 100; // € per allocation step
+    const MAX_CTR_PROPOSAL = 5000; // € — max extra monthly budget tested for next CTR step
     const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
     const coeffSante = Math.max(0.01, computeHealthCoeff(healthScore));
 
@@ -595,7 +597,7 @@ export default function SimulateurSEO() {
     // Gain réel obtenu en ajoutant CHUNK au budget cumulé : compare la position
     // actuelle à la position après ajout du chunk, plutôt qu'un gain théorique
     // vers la position-1 qui peut ne jamais être atteinte (budget gaspillé sans effet).
-    const getPotential = (kw: Keyword, cumBudget: number, nbActiveInCat: number): number => {
+    const getPotential = (kw: Keyword, cumBudget: number, nbActiveInCat: number, budgetDelta = CHUNK): number => {
       const rawPos = getPosRaw(kw, cumBudget, nbActiveInCat);
       if (rawPos <= 1) return 0; // already at best position
       // Use continuous (non-rounded) positions for the gain so that a single
@@ -603,7 +605,7 @@ export default function SimulateurSEO() {
       // isn't enough to cross an integer rank boundary — otherwise the
       // allocation loop sees gain=0 for every keyword and stops allocating
       // budget entirely.
-      const rawPosAfter = getPosRaw(kw, cumBudget + CHUNK, nbActiveInCat);
+      const rawPosAfter = getPosRaw(kw, cumBudget + budgetDelta, nbActiveInCat);
       const gain = interpolateCTR(rawPosAfter) - interpolateCTR(rawPos);
       if (gain <= 0) return 0;
       const crVal = cr[kw.intention as Intention]; // already in %
@@ -619,6 +621,7 @@ export default function SimulateurSEO() {
     const catActiveCount:   Record<string, number>   = {};
     const catActiveCountPerMonth: Record<string, number[]> = {};
     const catSpent:         Record<string, number>   = {};
+    const catNextCtrIncrease: Record<string, number | null> = {};
     keywords.forEach(kw => {
       kwBudgetPerMonth[kw.id] = Array(12).fill(0);
       kwCumBudget[kw.id]      = 0;
@@ -628,6 +631,7 @@ export default function SimulateurSEO() {
       catActiveCount[cat.id]        = 0;
       catActiveCountPerMonth[cat.id] = Array(12).fill(0);
       catSpent[cat.id]              = 0;
+      catNextCtrIncrease[cat.id]     = null;
     });
 
     // 12-month allocation loop
@@ -641,24 +645,47 @@ export default function SimulateurSEO() {
 
         let remaining = monthly;
         while (remaining > 0) {
-          const chunk = Math.min(CHUNK, remaining);
+          const baseChunk = Math.min(CHUNK, remaining);
           const nbActiveInCat = Math.max(1, catActiveCount[cat.id]);
-          // Find keyword with highest potential given current cumulative budgets
+          // Find keyword with highest potential. If 100€ has no CTR effect,
+          // retry with 200€, 300€... up to the remaining monthly budget.
           let bestKw: Keyword | null = null;
           let bestPot = -Infinity;
-          for (const kw of catKws) {
-            const pot = getPotential(kw, kwCumBudget[kw.id], nbActiveInCat);
-            if (pot > bestPot) { bestPot = pot; bestKw = kw; }
+          let bestChunk = baseChunk;
+          for (let testedChunk = baseChunk; testedChunk <= remaining; testedChunk += CHUNK) {
+            for (const kw of catKws) {
+              const pot = getPotential(kw, kwCumBudget[kw.id], nbActiveInCat, testedChunk);
+              if (pot > bestPot) { bestPot = pot; bestKw = kw; bestChunk = testedChunk; }
+            }
+            if (bestPot > 0) break;
           }
-          if (!bestKw || bestPot <= 0) break;
+
+          if (!bestKw || bestPot <= 0) {
+            // Budget limit reached without CTR movement: propose the smallest
+            // discrete monthly increase that would trigger the next CTR step.
+            for (let testedChunk = remaining + CHUNK; testedChunk <= remaining + MAX_CTR_PROPOSAL; testedChunk += CHUNK) {
+              let hasCtrStep = false;
+              for (const kw of catKws) {
+                if (getPotential(kw, kwCumBudget[kw.id], nbActiveInCat, testedChunk) > 0) {
+                  hasCtrStep = true;
+                  break;
+                }
+              }
+              if (hasCtrStep) {
+                catNextCtrIncrease[cat.id] = testedChunk - remaining;
+                break;
+              }
+            }
+            break;
+          }
 
           const wasInactive = kwCumBudget[bestKw.id] === 0;
-          kwCumBudget[bestKw.id]          += chunk;
-          kwBudgetPerMonth[bestKw.id][m]  += chunk;
-          catSpent[cat.id]                += chunk;
+          kwCumBudget[bestKw.id]          += bestChunk;
+          kwBudgetPerMonth[bestKw.id][m]  += bestChunk;
+          catSpent[cat.id]                += bestChunk;
           if (kwFirstMonth[bestKw.id] === null) kwFirstMonth[bestKw.id] = m;
           if (wasInactive) catActiveCount[cat.id]++;
-          remaining -= chunk;
+          remaining -= bestChunk;
         }
       });
       // Snapshot active-keyword count per category at the end of month m
@@ -675,6 +702,7 @@ export default function SimulateurSEO() {
       nbKwsInCat: number;
       activeKwsPerMonth: number[];
       totalActiveKws: number;
+      nextCtrMonthlyIncrease: number | null;
     }> = {};
     keywords.forEach(kw => {
       const bpm = kwBudgetPerMonth[kw.id];
@@ -690,6 +718,7 @@ export default function SimulateurSEO() {
         activeKwsPerMonth,
         totalActiveKws:     activeKwsPerMonth[11] ?? 1,
         totalBudget:        cpm[11] ?? 0,
+        nextCtrMonthlyIncrease: catNextCtrIncrease[kw.categoryId] ?? null,
         catCoeff:           catCoeff[kw.categoryId] ?? 1,
         nbKwsInCat:         catNbKws[kw.categoryId] ?? 1,
       };
@@ -738,6 +767,7 @@ export default function SimulateurSEO() {
         firstMonth: alloc?.firstMonthIdx !== null && alloc?.firstMonthIdx !== undefined
           ? alloc.firstMonthIdx + 1 : null,
         budgetPerMonth: alloc?.budgetPerMonth ?? Array(12).fill(0),
+        nextCtrMonthlyIncrease: alloc?.nextCtrMonthlyIncrease ?? null,
       };
     });
   }, [kwAllocations, keywords, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing, chalandisePercent]);
@@ -2400,6 +2430,14 @@ export default function SimulateurSEO() {
                 </tfoot>
               </table>
             </div>
+            {(() => {
+              const nextIncrease = Math.min(...kwResults.map(k => k.nextCtrMonthlyIncrease ?? Infinity));
+              return Number.isFinite(nextIncrease) ? (
+                <div style={{ marginTop: 8, fontSize: 10, color: '#7a9e8e' }}>
+                  Proposition discrète : +{fmtC(nextIncrease)} / mois pour tenter le prochain palier de CTR.
+                </div>
+              ) : null;
+            })()}
             {hasCatCoeffApplied && (
               <div style={{ marginTop: 8, fontSize: 10, color: '#5a7a6a' }}>
                 <span style={{ color: ORANGE }}>★</span> Ces chiffres prennent en compte l'extrapolation des mots clés associés
