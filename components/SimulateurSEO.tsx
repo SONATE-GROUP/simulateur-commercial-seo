@@ -120,6 +120,11 @@ const ACCEL_PER_KW        = 0.5;  // cluster synergy: budget discount per extra 
 const MAX_CLUSTER_SYNERGY = 2.5;  // cap on the topical-authority budget discount
 const REF_HEALTH_SCORE    = 60;   // health score at which the calibration above holds exactly
 
+// SEO results lag the spend: the budget invested during a month only moves the
+// ranking the FOLLOWING month(s). A keyword's position in a given month is
+// therefore driven by the budget already accumulated this many months earlier.
+const BUDGET_DELAY_MONTHS = 1;
+
 // Existing organic presence simulated by the site authority (DA), with NO paid
 // budget. The higher the DA relative to the keyword difficulty, the better the
 // site is already positioned — so it does not start from zero. Proximity gates
@@ -839,20 +844,24 @@ export default function SimulateurSEO() {
       const coeff    = alloc?.catCoeff ?? 1;
       const totalBudget = alloc?.totalBudget ?? 0;
 
-      // Position at M+12 (full year cumulative budget + active-keyword synergy)
-      const totalActiveKws = alloc?.totalActiveKws ?? 1;
-      const posRaw = computePosRaw(totalBudget, kw.difficulty, da, kw.proximity, totalActiveKws, coeffSante, posWeights);
-      const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
+      const cumArr    = alloc?.cumulativePerMonth ?? Array(12).fill(0);
+      const activeArr = alloc?.activeKwsPerMonth ?? Array(12).fill(1);
 
-      // Monthly positions based on actual cumulative budget + active-keyword count at each month
-      const activeKwsPerMonth = alloc?.activeKwsPerMonth ?? Array(12).fill(1);
-      // No early return for a zero-budget month: an authoritative site already
-      // ranks on its exact themes before any spend, so the baseline DA-driven
-      // position (from computePosRaw) must show through from M1.
-      const monthlyPos = (alloc?.cumulativePerMonth ?? Array(12).fill(0)).map((cumBudget, i) => {
-        const pr = computePosRaw(cumBudget, kw.difficulty, da, kw.proximity, activeKwsPerMonth[i] ?? 1, coeffSante, posWeights);
+      // Monthly positions with a BUDGET_DELAY_MONTHS lag: a month's ranking is
+      // driven by the budget (and cluster synergy) already accumulated that many
+      // months earlier. The first month(s) therefore show only the pre-existing
+      // DA-driven presence — no early return so that baseline still shows from M1.
+      const monthlyPos = cumArr.map((_, i) => {
+        const src = i - BUDGET_DELAY_MONTHS;
+        const lagCum    = src >= 0 ? (cumArr[src] ?? 0)    : 0;
+        const lagActive = src >= 0 ? (activeArr[src] ?? 1) : 0;
+        const pr = computePosRaw(lagCum, kw.difficulty, da, kw.proximity, lagActive, coeffSante, posWeights);
         return Math.min(Math.max(Math.round(pr), 1), 11);
       });
+
+      // Position at M+12 (last projected month) — kept consistent with the lagged
+      // monthly ramp above.
+      const pos = monthlyPos[11] ?? 11;
 
       const baseCtr = CTR_TABLE[pos] ?? 0;
       const ctr     = baseCtr * (budgetRatio / 100);
