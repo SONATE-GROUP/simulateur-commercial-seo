@@ -92,20 +92,19 @@ const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
 
 // Budget → position model (continuous position, 1 = best, 11 = off the top 10).
 //
-// Calibration — reference keyword: difficulty == site DA, proximity "exact",
-// a single funded keyword in its category, neutral health score (60).
-// The budget thresholds below are the base calibration (500 € → top 10, then
-// 300 € halving steps) divided by BUDGET_IMPACT to make budget more impactful:
-//   • each 0.5^step still halves the remaining distance to position 1:
-//         pos(n+1) = (1 + pos(n)) / 2
-//     → closed form  pos = 1 + 9 · 0.5^((budget − BUDGET_TOP10) / BUDGET_HALVING_STEP).
-//
-// Difficulty (relative to DA), proximity, site health and topical-cluster
-// synergy only scale HOW MUCH budget is required to travel along that curve —
-// they never change its shape, so budget always remains the visible driver.
-const BUDGET_IMPACT       = 8;    // ×8 budget impact: divides the budget thresholds below
-const BUDGET_TOP10        = 500 / BUDGET_IMPACT; // € — cumulative budget to enter the top 10
-const BUDGET_HALVING_STEP = 300 / BUDGET_IMPACT; // € — extra budget that halves the distance to pos 1
+// Two distinct phases:
+//   1. ENTERING the top 10 — governed by the budget weighting (unchanged): the
+//      reference keyword (difficulty == site DA, proximity "exact", one funded
+//      keyword, neutral health 60) reaches position 10 at BUDGET_TOP10 of
+//      weighted budget. Difficulty/DA, proximity, health and cluster synergy
+//      only scale HOW MUCH budget is required to get there.
+//   2. CLIMBING from 10 to 1 — exponential difficulty: each position gained
+//      toward #1 costs POS_CLIMB_BASE× more budget than the previous one.
+//         budget(pos) = top10 · POS_CLIMB_BASE^(10 − pos)
+//      ⇒  pos = 10 − log_base(budget / top10)
+const BUDGET_IMPACT       = 8;    // ×8 budget impact for ENTERING the top 10 (weighting)
+const BUDGET_TOP10        = 500 / BUDGET_IMPACT; // € — weighted budget to reach position 10
+const POS_CLIMB_BASE      = 1.5;  // >1 → exponential difficulty to climb from 10 to 1
 const DIFFICULTY_EXP      = 1.9;  // sensitivity of budget needs to the difficulty / DA ratio
 const ACCEL_PER_KW        = 0.5;  // cluster synergy: budget discount per extra funded keyword
 const MAX_CLUSTER_SYNERGY = 2.5;  // cap on the topical-authority budget discount
@@ -130,13 +129,12 @@ function computePosRaw(
   const healthFactor  = coeffSante / Math.max(0.01, computeHealthCoeff(REF_HEALTH_SCORE));
   const clusterFactor = Math.min(MAX_CLUSTER_SYNERGY, 1 + ACCEL_PER_KW * Math.max(0, nbActiveInCat - 1));
 
-  // Budget thresholds for THIS keyword, scaled from the reference calibration.
+  // Weighted budget required by THIS keyword to reach position 10 (unchanged
+  // weighting). The 10 → 1 climb above it is exponentially harder.
   const scale = difficultyFactor / Math.max(0.01, healthFactor * clusterFactor);
   const top10 = BUDGET_TOP10 * scale;
-  const step  = BUDGET_HALVING_STEP * scale;
 
-  const n = (cumBudget - top10) / step;
-  return 1 + 9 * Math.pow(0.5, n);
+  return 10 - Math.log(cumBudget / top10) / Math.log(POS_CLIMB_BASE);
 }
 
 // Piecewise-linear coefficient from the Semrush Health Score:
@@ -2279,6 +2277,9 @@ export default function SimulateurSEO() {
                       { label: 'Mot clé / Sujet', align: 'left'   },
                       { label: 'Volume',           align: 'right'  },
                       { label: 'Diff.',            align: 'center' },
+                      { label: 'Position M+3',     align: 'center' },
+                      { label: 'Position M+6',     align: 'center' },
+                      { label: 'Position M+9',     align: 'center' },
                       { label: 'Position M+12',    align: 'center' },
                       { label: 'CTR',              align: 'center' },
                       { label: 'Trafic / mois',    align: 'right', starred: hasCatCoeffApplied },
@@ -2325,6 +2326,20 @@ export default function SimulateurSEO() {
                           </td>
                           <td style={{ padding: '8px', textAlign: 'right', color: '#a8c5b5' }}>{fmtN(kw.volume)}</td>
                           <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>{kw.difficulty}</td>
+                          {[2, 5, 8].map(mi => {
+                            const p = kw.monthlyPos[mi];
+                            return (
+                              <td key={mi} style={{ padding: '8px', textAlign: 'center' }}>
+                                <span style={{
+                                  backgroundColor: p <= 3 ? `${ORANGE}aa` : p <= 6 ? '#2d7a5e99' : `${G3}99`,
+                                  borderRadius: 10, padding: '2px 9px',
+                                  fontSize: 11, fontWeight: 700, color: '#e8e0d4',
+                                }}>
+                                  {p === 11 ? '11+' : `#${p}`}
+                                </span>
+                              </td>
+                            );
+                          })}
                           <td style={{ padding: '8px', textAlign: 'center' }}>
                             <span style={{
                               backgroundColor: kw.pos <= 3 ? ORANGE : kw.pos <= 6 ? '#2d7a5e' : G3,
@@ -2409,7 +2424,7 @@ export default function SimulateurSEO() {
                         </tr>
                         {isExpanded && (
                           <tr key={`${kw.id}-monthly`} style={{ borderBottom: `1px solid ${G3}`, backgroundColor: '#0d1f18' }}>
-                            <td colSpan={12} style={{ padding: '8px 12px 12px 36px' }}>
+                            <td colSpan={15} style={{ padding: '8px 12px 12px 36px' }}>
                               <div style={{ fontSize: 9, color: '#5a7a6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
                                 Progression de position estimée
                               </div>
@@ -2443,6 +2458,9 @@ export default function SimulateurSEO() {
                   <tr style={{ borderTop: `2px solid ${G3}` }}>
                     <td></td>
                     <td style={{ padding: '10px 8px', color: CREAM, fontWeight: 700 }}>Total</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
                     <td></td>
                     <td></td>
                     <td></td>
