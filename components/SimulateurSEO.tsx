@@ -120,6 +120,11 @@ const ACCEL_PER_KW        = 0.5;  // cluster synergy: budget discount per extra 
 const MAX_CLUSTER_SYNERGY = 2.5;  // cap on the topical-authority budget discount
 const REF_HEALTH_SCORE    = 60;   // health score at which the calibration above holds exactly
 
+// SEO results lag the spend: the budget invested during a month only moves the
+// ranking the FOLLOWING month(s). A keyword's position in a given month is
+// therefore driven by the budget already accumulated this many months earlier.
+const BUDGET_DELAY_MONTHS = 1;
+
 // Existing organic presence simulated by the site authority (DA), with NO paid
 // budget. The higher the DA relative to the keyword difficulty, the better the
 // site is already positioned — so it does not start from zero. Proximity gates
@@ -272,6 +277,17 @@ const G5 = '#233d30';
 const CREAM  = '#f5f0e8';
 const ORANGE = '#e8571a';
 const SEO_CLR = '#4fc3d6'; // bright teal for the SEO series — readable on the dark card
+
+// Shared colour code for a position badge, used by every "Position" column
+// (M+3, M+6, M+9, M+12) and the monthly progression so a given rank always
+// looks the same: top 3 = orange, 4-6 = green, 7-10 = grey, 11+ = muted.
+function posBadgeColor(p: number): { backgroundColor: string; color: string; border: string } {
+  return {
+    backgroundColor: p <= 3 ? ORANGE : p <= 6 ? '#2d7a5e' : p <= 10 ? G3 : '#1a2e25',
+    color: p >= 11 ? '#5a7a6a' : 'white',
+    border: p >= 11 ? `1px solid ${G3}` : 'none',
+  };
+}
 
 /* ─── FORMATTERS ─────────────────────────────────────────────── */
 const fmtN = (n: number) =>
@@ -828,20 +844,24 @@ export default function SimulateurSEO() {
       const coeff    = alloc?.catCoeff ?? 1;
       const totalBudget = alloc?.totalBudget ?? 0;
 
-      // Position at M+12 (full year cumulative budget + active-keyword synergy)
-      const totalActiveKws = alloc?.totalActiveKws ?? 1;
-      const posRaw = computePosRaw(totalBudget, kw.difficulty, da, kw.proximity, totalActiveKws, coeffSante, posWeights);
-      const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
+      const cumArr    = alloc?.cumulativePerMonth ?? Array(12).fill(0);
+      const activeArr = alloc?.activeKwsPerMonth ?? Array(12).fill(1);
 
-      // Monthly positions based on actual cumulative budget + active-keyword count at each month
-      const activeKwsPerMonth = alloc?.activeKwsPerMonth ?? Array(12).fill(1);
-      // No early return for a zero-budget month: an authoritative site already
-      // ranks on its exact themes before any spend, so the baseline DA-driven
-      // position (from computePosRaw) must show through from M1.
-      const monthlyPos = (alloc?.cumulativePerMonth ?? Array(12).fill(0)).map((cumBudget, i) => {
-        const pr = computePosRaw(cumBudget, kw.difficulty, da, kw.proximity, activeKwsPerMonth[i] ?? 1, coeffSante, posWeights);
+      // Monthly positions with a BUDGET_DELAY_MONTHS lag: a month's ranking is
+      // driven by the budget (and cluster synergy) already accumulated that many
+      // months earlier. The first month(s) therefore show only the pre-existing
+      // DA-driven presence — no early return so that baseline still shows from M1.
+      const monthlyPos = cumArr.map((_, i) => {
+        const src = i - BUDGET_DELAY_MONTHS;
+        const lagCum    = src >= 0 ? (cumArr[src] ?? 0)    : 0;
+        const lagActive = src >= 0 ? (activeArr[src] ?? 1) : 0;
+        const pr = computePosRaw(lagCum, kw.difficulty, da, kw.proximity, lagActive, coeffSante, posWeights);
         return Math.min(Math.max(Math.round(pr), 1), 11);
       });
+
+      // Position at M+12 (last projected month) — kept consistent with the lagged
+      // monthly ramp above.
+      const pos = monthlyPos[11] ?? 11;
 
       const baseCtr = CTR_TABLE[pos] ?? 0;
       const ctr     = baseCtr * (budgetRatio / 100);
@@ -2604,9 +2624,9 @@ export default function SimulateurSEO() {
                             return (
                               <td key={mi} style={{ padding: '8px', textAlign: 'center' }}>
                                 <span style={{
-                                  backgroundColor: p <= 3 ? `${ORANGE}aa` : p <= 6 ? '#2d7a5e99' : `${G3}99`,
+                                  ...posBadgeColor(p),
                                   borderRadius: 10, padding: '2px 9px',
-                                  fontSize: 11, fontWeight: 700, color: '#e8e0d4',
+                                  fontSize: 11, fontWeight: 700,
                                 }}>
                                   {p === 11 ? '11+' : `#${p}`}
                                 </span>
@@ -2615,9 +2635,9 @@ export default function SimulateurSEO() {
                           })}
                           <td style={{ padding: '8px', textAlign: 'center' }}>
                             <span style={{
-                              backgroundColor: kw.pos <= 3 ? ORANGE : kw.pos <= 6 ? '#2d7a5e' : G3,
+                              ...posBadgeColor(kw.pos),
                               borderRadius: 10, padding: '2px 9px',
-                              fontSize: 11, fontWeight: 700, color: 'white',
+                              fontSize: 11, fontWeight: 700,
                             }}>
                               {kw.pos === 11 ? '11+' : `#${kw.pos}`}
                             </span>
@@ -2706,10 +2726,9 @@ export default function SimulateurSEO() {
                                   <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
                                     <span style={{ fontSize: 9, color: kw.budgetPerMonth[i] > 0 ? ORANGE : '#5a7a6a', fontWeight: 600 }}>M+{i + 1}</span>
                                     <span style={{
-                                      backgroundColor: p <= 3 ? ORANGE : p <= 6 ? '#2d7a5e' : p <= 10 ? G3 : '#1a2e25',
+                                      ...posBadgeColor(p),
                                       borderRadius: 8, padding: '3px 7px',
-                                      fontSize: 11, fontWeight: 700, color: p === 11 ? '#5a7a6a' : 'white',
-                                      border: p === 11 ? `1px solid ${G3}` : 'none',
+                                      fontSize: 11, fontWeight: 700,
                                       minWidth: 32, textAlign: 'center',
                                     }}>
                                       {p === 11 ? '11+' : `#${p}`}
