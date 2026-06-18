@@ -92,7 +92,12 @@ const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
 
 // Budget → position model (continuous position, 1 = best, 11 = off the top 10).
 //
-// Two distinct phases:
+// Three phases:
+//   0. EXISTING PRESENCE — even with zero paid budget, an authoritative site
+//      (high DA) already ranks on themes it covers, ESPECIALLY exact-match
+//      keywords. It does not start from zero. This pre-existing presence is
+//      modelled as a "virtual budget" (driven by DA / difficulty and proximity)
+//      that stacks with the paid budget on the same position scale.
 //   1. ENTERING the top 10 — governed by the budget weighting (unchanged): the
 //      reference keyword (difficulty == site DA, proximity "exact", one funded
 //      keyword, neutral health 60) reaches position 10 at BUDGET_TOP10 of
@@ -110,6 +115,16 @@ const ACCEL_PER_KW        = 0.5;  // cluster synergy: budget discount per extra 
 const MAX_CLUSTER_SYNERGY = 2.5;  // cap on the topical-authority budget discount
 const REF_HEALTH_SCORE    = 60;   // health score at which the calibration above holds exactly
 
+// Existing organic presence simulated by the site authority (DA), with NO paid
+// budget. The higher the DA relative to the keyword difficulty, the better the
+// site is already positioned — so it does not start from zero. Proximity gates
+// this: an EXACT-match theme benefits fully, a thematic keyword barely at all.
+//   • Reference: when DA == difficulty on an exact match → position 10 for free.
+//   • Each doubling of DA / difficulty adds PRESENCE_STRENGTH positions (exact).
+const PRESENCE_STRENGTH = 3.0;   // free positions gained per ×2 of DA / difficulty (exact match)
+const PRESENCE_PROX_WEIGHT: Record<number, number> = { 1: 1.0, 2: 0.45, 3: 0.15 };
+const MAX_EXISTING_PRESENCE = 9; // cap: the best a site can rank for free is position 1
+
 function computePosRaw(
   cumBudget: number,
   difficulty: number,
@@ -118,7 +133,7 @@ function computePosRaw(
   nbActiveInCat: number,
   coeffSante: number,
 ): number {
-  if (cumBudget <= 0 || da <= 0) return 100;
+  if (da <= 0) return 100;
 
   // Harder keywords (relative to the site authority) and broad-match keywords
   // need proportionally more budget to reach the same position.
@@ -134,7 +149,23 @@ function computePosRaw(
   const scale = difficultyFactor / Math.max(0.01, healthFactor * clusterFactor);
   const top10 = BUDGET_TOP10 * scale;
 
-  return 10 - Math.log(cumBudget / top10) / Math.log(POS_CLIMB_BASE);
+  // Pre-existing organic presence from DA, converted into a virtual budget so
+  // it stacks with the paid budget on the same scale. Positive when the site
+  // authority beats the keyword difficulty; weighted by proximity so exact
+  // themes benefit most. At zero paid budget the position is simply
+  // 10 − presence (the top10 cancels out), so it is purely DA/proximity driven.
+  const presence = Math.min(
+    MAX_EXISTING_PRESENCE,
+    PRESENCE_STRENGTH
+      * (Math.log(da / Math.max(1, difficulty)) / Math.LN2)
+      * (PRESENCE_PROX_WEIGHT[proximity] ?? 0),
+  );
+  const virtualBudget = top10 * Math.pow(POS_CLIMB_BASE, presence);
+
+  const effectiveBudget = cumBudget + virtualBudget;
+  if (effectiveBudget <= 0) return 100;
+
+  return 10 - Math.log(effectiveBudget / top10) / Math.log(POS_CLIMB_BASE);
 }
 
 // Piecewise-linear coefficient from the Semrush Health Score:
@@ -758,8 +789,10 @@ export default function SimulateurSEO() {
 
       // Monthly positions based on actual cumulative budget + active-keyword count at each month
       const activeKwsPerMonth = alloc?.activeKwsPerMonth ?? Array(12).fill(1);
+      // No early return for a zero-budget month: an authoritative site already
+      // ranks on its exact themes before any spend, so the baseline DA-driven
+      // position (from computePosRaw) must show through from M1.
       const monthlyPos = (alloc?.cumulativePerMonth ?? Array(12).fill(0)).map((cumBudget, i) => {
-        if (cumBudget === 0) return 11;
         const pr = computePosRaw(cumBudget, kw.difficulty, da, kw.proximity, activeKwsPerMonth[i] ?? 1, coeffSante);
         return Math.min(Math.max(Math.round(pr), 1), 11);
       });
