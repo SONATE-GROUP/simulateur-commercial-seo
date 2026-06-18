@@ -273,6 +273,17 @@ const CREAM  = '#f5f0e8';
 const ORANGE = '#e8571a';
 const SEO_CLR = '#4fc3d6'; // bright teal for the SEO series — readable on the dark card
 
+// Shared colour code for a position badge, used by every "Position" column
+// (M+3, M+6, M+9, M+12) and the monthly progression so a given rank always
+// looks the same: top 3 = orange, 4-6 = green, 7-10 = grey, 11+ = muted.
+function posBadgeColor(p: number): { backgroundColor: string; color: string; border: string } {
+  return {
+    backgroundColor: p <= 3 ? ORANGE : p <= 6 ? '#2d7a5e' : p <= 10 ? G3 : '#1a2e25',
+    color: p >= 11 ? '#5a7a6a' : 'white',
+    border: p >= 11 ? `1px solid ${G3}` : 'none',
+  };
+}
+
 /* ─── FORMATTERS ─────────────────────────────────────────────── */
 const fmtN = (n: number) =>
   new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(n));
@@ -2604,9 +2615,9 @@ export default function SimulateurSEO() {
                             return (
                               <td key={mi} style={{ padding: '8px', textAlign: 'center' }}>
                                 <span style={{
-                                  backgroundColor: p <= 3 ? `${ORANGE}aa` : p <= 6 ? '#2d7a5e99' : `${G3}99`,
+                                  ...posBadgeColor(p),
                                   borderRadius: 10, padding: '2px 9px',
-                                  fontSize: 11, fontWeight: 700, color: '#e8e0d4',
+                                  fontSize: 11, fontWeight: 700,
                                 }}>
                                   {p === 11 ? '11+' : `#${p}`}
                                 </span>
@@ -2615,9 +2626,9 @@ export default function SimulateurSEO() {
                           })}
                           <td style={{ padding: '8px', textAlign: 'center' }}>
                             <span style={{
-                              backgroundColor: kw.pos <= 3 ? ORANGE : kw.pos <= 6 ? '#2d7a5e' : G3,
+                              ...posBadgeColor(kw.pos),
                               borderRadius: 10, padding: '2px 9px',
-                              fontSize: 11, fontWeight: 700, color: 'white',
+                              fontSize: 11, fontWeight: 700,
                             }}>
                               {kw.pos === 11 ? '11+' : `#${kw.pos}`}
                             </span>
@@ -2706,10 +2717,9 @@ export default function SimulateurSEO() {
                                   <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
                                     <span style={{ fontSize: 9, color: kw.budgetPerMonth[i] > 0 ? ORANGE : '#5a7a6a', fontWeight: 600 }}>M+{i + 1}</span>
                                     <span style={{
-                                      backgroundColor: p <= 3 ? ORANGE : p <= 6 ? '#2d7a5e' : p <= 10 ? G3 : '#1a2e25',
+                                      ...posBadgeColor(p),
                                       borderRadius: 8, padding: '3px 7px',
-                                      fontSize: 11, fontWeight: 700, color: p === 11 ? '#5a7a6a' : 'white',
-                                      border: p === 11 ? `1px solid ${G3}` : 'none',
+                                      fontSize: 11, fontWeight: 700,
                                       minWidth: 32, textAlign: 'center',
                                     }}>
                                       {p === 11 ? '11+' : `#${p}`}
