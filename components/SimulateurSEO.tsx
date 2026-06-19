@@ -263,7 +263,7 @@ function computeHealthCoeff(score: number): number {
 // budget) to gain one DA point rises by tier; the two top tiers also require a
 // minimum monthly organic traffic ("clics") to convert budget into authority.
 function daCostPerPoint(da: number): number {
-  if (da <= 20) return 1000;   // 0 → 20
+  if (da <= 20) return 500;    // 0 → 20
   if (da <= 30) return 2500;   // 21 → 30
   if (da <= 40) return 4000;   // 31 → 40
   if (da <= 50) return 5500;   // 41 → 50
@@ -1061,6 +1061,10 @@ export default function SimulateurSEO() {
         ...kw,
         pos: diffPos(kw.pos, base?.pos ?? 11),
         monthlyPos,
+        // CTR is also incremental so that "volume × CTR = trafic" stays true in
+        // this view (otherwise the full CTR shown next to an incremental traffic
+        // looks impossible — e.g. CTR 29.6% but trafic 262 instead of 296).
+        ctr:     Math.max(0, kw.ctr     - (base?.ctr     ?? 0)),
         traffic: Math.max(0, kw.traffic - (base?.traffic ?? 0)),
         leads:   Math.max(0, kw.leads   - (base?.leads   ?? 0)),
         ca:      Math.max(0, kw.ca      - (base?.ca      ?? 0)),
@@ -1191,11 +1195,19 @@ export default function SimulateurSEO() {
     const budgetMensuel = categories.reduce((s, c) => s + (c.budget ?? DEFAULT_CATEGORY_BUDGET), 0) * (budgetRatio / 100);
     const budgetTotal   = budgetMensuel * 12;
 
-    const totalCA_2ans  = totalCA_annual + 12 * totalCA_m12;
+    // ROI à 1 an : CA cumulé des 12 mois simulés (montée en puissance) vs budget annuel.
     const roi1an     = budgetTotal > 0 ? ((totalCA_annual - budgetTotal) / budgetTotal) * 100 : 0;
     const roiMult1an = budgetTotal > 0 ? totalCA_annual / budgetTotal : 0;
-    const roi2ans    = budgetTotal > 0 ? ((totalCA_2ans  - budgetTotal) / budgetTotal) * 100 : 0;
-    const roiMult    = budgetTotal > 0 ? totalCA_2ans  / budgetTotal : 0;
+
+    // ROI à 2 ans : on projette l'an 2 (M13→M24) à partir du M12, considéré
+    // représentatif des 12 mois suivants → CA an 2 = 12 × CA mensuel du M12.
+    // Le budget de l'an 2 est nul (aucun réinvestissement). Le dénominateur
+    // reste donc le seul budget de l'an 1.
+    const caYear2      = 12 * totalCA_m12;             // M13→M24 au régime du M12
+    const totalCA_2ans = totalCA_annual + caYear2;     // an 1 (réel) + an 2 (projeté)
+    const budget2ans   = budgetTotal;                  // an 1 uniquement (an 2 = 0 €)
+    const roi2ans    = budget2ans > 0 ? ((totalCA_2ans - budget2ans) / budget2ans) * 100 : 0;
+    const roiMult    = budget2ans > 0 ? totalCA_2ans  / budget2ans : 0;
 
     const baseLeads   = rawLeads_m12;
     const baseRdv     = baseLeads * (tauxRdv / 100);
