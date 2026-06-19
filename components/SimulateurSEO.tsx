@@ -228,6 +228,23 @@ function computeHealthCoeff(score: number): number {
   return 0.88 + (s - 70) * 0.004;
 }
 
+// Monthly DA growth driven by the invested budget. The cost (in € of cumulative
+// budget) to gain one DA point rises by tier; the two top tiers also require a
+// minimum monthly organic traffic ("clics") to convert budget into authority.
+function daCostPerPoint(da: number): number {
+  if (da <= 20) return 1000;   // 0 → 20
+  if (da <= 30) return 2500;   // 21 → 30
+  if (da <= 40) return 4000;   // 31 → 40
+  if (da <= 50) return 5500;   // 41 → 50
+  if (da <= 60) return 10000;  // 51 → 60
+  return 25000;                // 61 → 100
+}
+function daGrowthAllowed(da: number, monthlyTraffic: number): boolean {
+  if (da >= 51 && da <= 60) return monthlyTraffic >= 10000;  // 10 000 clics / mois
+  if (da >= 61) return monthlyTraffic >= da * 1000;          // DA × 1000 en trafic
+  return true;
+}
+
 const DEFAULT_CATEGORY_BUDGET = 1600; // € — budget mensuel par défaut d'une catégorie
 
 const DEFAULT_KEYWORDS: Keyword[] = [
@@ -854,46 +871,85 @@ export default function SimulateurSEO() {
     return result;
   }, [keywords, categories, da, healthScore, budgetRatio, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, chalandisePercent, posWeights]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Per-keyword results — FULL view (existing organic presence + paid budget) */
-  const fullKwResults = useMemo(() => {
+  /* DA progression engine — the DA grows month by month with the invested
+     budget. Because the DA drives the positions, and the positions drive the
+     traffic that gates the top growth tiers, the months are computed
+     sequentially: each month's positions use the current DA, the resulting
+     traffic decides how much the DA grows, and the new DA applies next month.
+     Produces the per-keyword monthly positions (FULL view), the DA at each
+     month, and the start / end-of-year DA. */
+  const daEngine = useMemo(() => {
     const coeffSante = Math.max(0.01, computeHealthCoeff(healthScore));
     const nbKeywords = keywords.length;
-    const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
     const clampCont = (raw: number) => Math.min(11, Math.max(1, raw));
+    const monthlyBudget = categories.reduce((s, c) => s + (c.budget ?? DEFAULT_CATEGORY_BUDGET), 0) * (budgetRatio / 100);
 
-    // Lagged cumulative budget (budget delay): a month's ranking is driven by the
-    // budget already accumulated BUDGET_DELAY_MONTHS months earlier.
     const cumArrs = keywords.map(kw => kwAllocations[kw.id]?.cumulativePerMonth ?? Array(12).fill(0));
     const lagCumOf = (k: number, i: number) => {
       const src = i - BUDGET_DELAY_MONTHS;
       return src >= 0 ? (cumArrs[k][src] ?? 0) : 0;
     };
+    const coeffs = keywords.map(kw =>
+      kwAllocations[kw.id]?.catCoeff ?? (categories.find(c => c.id === kw.categoryId)?.coeff ?? 1));
 
-    // Pass A — intrinsic (synergy-neutral) positions per keyword and month. These
-    // feed the topical-authority synergy without creating a feedback loop.
-    const basePos: number[][] = keywords.map((kw, k) =>
-      Array.from({ length: 12 }, (_, i) =>
-        clampCont(computePosRaw(lagCumOf(k, i), kw.difficulty, da, kw.proximity, 1, coeffSante, posWeights)),
-      ),
-    );
-    const sumPerMonth = Array(12).fill(0);
-    basePos.forEach(arr => arr.forEach((p, i) => { sumPerMonth[i] += p; }));
+    const daStart = da;
+    let curDa = da;
+    let daPot = 0; // budget accumulated toward the next DA point
+    const daPerMonth: number[] = [];
+    const monthlyPosArrs: number[][] = keywords.map(() => Array(12).fill(11));
 
-    // Pass B — final positions, boosted by the synergy from the OTHER keywords'
-    // average intrinsic position that month (and their count).
-    return keywords.map((kw, k) => {
+    for (let i = 0; i < 12; i++) {
+      daPerMonth[i] = curDa;
+
+      // Pass A — intrinsic (synergy-neutral) positions this month at the current DA.
+      const basePos = keywords.map((kw, k) =>
+        clampCont(computePosRaw(lagCumOf(k, i), kw.difficulty, curDa, kw.proximity, 1, coeffSante, posWeights)));
+      const sum = basePos.reduce((s, p) => s + p, 0);
+
+      // Pass B — final positions (with topical-authority synergy) + month traffic.
+      const calMonth = (startMonth + i) % 12;
+      const seasonal = seasonalityEnabled && highSeasonMonths[calMonth] ? highSeasonMultiplier : 1;
+      let traffic = 0;
+      keywords.forEach((kw, k) => {
+        const avgOthers = nbKeywords > 1 ? (sum - basePos[k]) / (nbKeywords - 1) : Infinity;
+        const syn = clusterSynergyFactor(avgOthers, nbKeywords, posWeights.keywords);
+        const p = Math.min(Math.max(Math.round(
+          computePosRaw(lagCumOf(k, i), kw.difficulty, curDa, kw.proximity, syn, coeffSante, posWeights)), 1), 11);
+        monthlyPosArrs[k][i] = p;
+        const ctrM = (CTR_TABLE[p] ?? 0) * (budgetRatio / 100);
+        traffic += getEffectiveVolume(kw, chalandisePercent) * ctrM * coeffs[k] * seasonal;
+      });
+      traffic *= kwMultiplier;
+
+      // End-of-month DA update: convert the invested budget into DA points as far
+      // as the current tier cost and traffic condition allow.
+      daPot += monthlyBudget;
+      while (curDa < 100) {
+        const cost = daCostPerPoint(curDa);
+        if (daPot >= cost && daGrowthAllowed(curDa, traffic)) {
+          curDa += 1;
+          daPot -= cost;
+        } else break;
+      }
+    }
+
+    const monthlyPosById: Record<string, number[]> = {};
+    keywords.forEach((kw, k) => { monthlyPosById[kw.id] = monthlyPosArrs[k]; });
+    return { daStart, daFinal: curDa, daPerMonth, monthlyPosById };
+  }, [kwAllocations, keywords, categories, da, healthScore, budgetRatio, chalandisePercent, kwMultiplier, seasonalityEnabled, startMonth, highSeasonMonths, highSeasonMultiplier, posWeights]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Per-keyword results — FULL view (existing organic presence + paid budget),
+     reading the DA-aware monthly positions from the progression engine. */
+  const fullKwResults = useMemo(() => {
+    const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
+
+    return keywords.map(kw => {
       const alloc    = kwAllocations[kw.id];
       const coeff    = alloc?.catCoeff ?? 1;
       const totalBudget = alloc?.totalBudget ?? 0;
 
-      const monthlyPos = Array.from({ length: 12 }, (_, i) => {
-        const avgOthers = nbKeywords > 1 ? (sumPerMonth[i] - basePos[k][i]) / (nbKeywords - 1) : Infinity;
-        const synergy = clusterSynergyFactor(avgOthers, nbKeywords, posWeights.keywords);
-        const pr = computePosRaw(lagCumOf(k, i), kw.difficulty, da, kw.proximity, synergy, coeffSante, posWeights);
-        return Math.min(Math.max(Math.round(pr), 1), 11);
-      });
-
-      // Position at M+12 (last projected month) — consistent with the ramp above.
+      const monthlyPos = daEngine.monthlyPosById[kw.id] ?? Array(12).fill(11);
+      // Position at M+12 (last projected month).
       const pos = monthlyPos[11] ?? 11;
 
       const baseCtr = CTR_TABLE[pos] ?? 0;
@@ -911,7 +967,7 @@ export default function SimulateurSEO() {
         nextCtrMonthlyIncrease: alloc?.nextCtrMonthlyIncrease ?? null,
       };
     });
-  }, [kwAllocations, keywords, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing, chalandisePercent, posWeights]);
+  }, [daEngine, kwAllocations, keywords, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing, chalandisePercent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Per-keyword results — BASELINE view (no paid budget at all): each keyword
      keeps only the DA-driven organic position it already holds, with no budget
@@ -1743,6 +1799,23 @@ export default function SimulateurSEO() {
             </div>
             <Slider light label="Domain Authority (DA)" value={da} min={1} max={100}
               onChange={v => update({ da: v })} />
+            {/* Évolution du DA sur 1 an, calculée à partir du budget investi */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, margin: '-6px 0 14px',
+              backgroundColor: L_INPUT, border: `1px solid ${L_BORD}`, borderRadius: 8, padding: '7px 10px',
+            }}>
+              <span style={{ color: L_MED, fontSize: 11, fontWeight: 600 }}>DA sur 1 an</span>
+              <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 800 }}>
+                <span style={{ color: L_DARK, fontSize: 15 }}>{daEngine.daStart}</span>
+                <span style={{ color: L_SOFT, fontSize: 13 }}>→</span>
+                <span style={{ color: ORANGE, fontSize: 18 }}>{daEngine.daFinal}</span>
+                {daEngine.daFinal > daEngine.daStart && (
+                  <span style={{ color: '#2d7a5e', fontSize: 11, fontWeight: 700 }}>
+                    +{daEngine.daFinal - daEngine.daStart}
+                  </span>
+                )}
+              </span>
+            </div>
             <Slider light label="Score Santé Semrush" value={healthScore} min={0} max={100}
               hint={`Coefficient : ${coeffSante}`}
               onChange={v => update({ healthScore: v })} />
