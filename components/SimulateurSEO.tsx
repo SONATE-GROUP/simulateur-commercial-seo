@@ -344,6 +344,13 @@ const CREAM  = '#f5f0e8';
 const ORANGE = '#e8571a';
 const SEO_CLR = '#4fc3d6'; // bright teal for the SEO series — readable on the dark card
 
+// Shared geometry for the 3 monthly charts so each month's bars line up
+// vertically across them: identical left inset (Y-axis width, sized for the
+// largest axis values) and identical right inset (reserves room for the CPA
+// chart's right-hand axis even on the charts that don't have one).
+const CHART_AXIS_W = 50;      // left Y-axis width — same on every chart
+const CHART_RIGHT_INSET = 46; // right inset — = the CPA chart's right axis width
+
 // Shared colour code for a position badge, used by every "Position" column
 // (M+3, M+6, M+9, M+12) and the monthly progression so a given rank always
 // looks the same: top 3 = orange, 4-6 = green, 7-10 = grey, 11+ = muted.
@@ -2614,10 +2621,11 @@ export default function SimulateurSEO() {
               )}
             </div>
             <ResponsiveContainer width="100%" height={230}>
-              <ComposedChart data={monthlyData} margin={{ top: 8, right: 8, left: 10, bottom: 4 }}>
+              <ComposedChart data={monthlyData} margin={{ top: 8, right: CHART_RIGHT_INSET, left: 0, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={G3} />
                 <XAxis dataKey="month" tick={{ fill: '#7a9e8e', fontSize: 11 }} axisLine={{ stroke: G3 }} tickLine={false} />
                 <YAxis
+                  width={CHART_AXIS_W}
                   tick={{ fill: '#7a9e8e', fontSize: 10 }}
                   axisLine={{ stroke: G3 }}
                   tickLine={false}
@@ -2658,11 +2666,11 @@ export default function SimulateurSEO() {
               <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Évolution du CPA (coût d'acquisition) : 12 mois
             </div>
             <ResponsiveContainer width="100%" height={220}>
-              <ComposedChart data={monthlyData} margin={{ top: 8, right: 48, left: 0, bottom: 4 }}>
+              <ComposedChart data={monthlyData} margin={{ top: 8, right: 0, left: 0, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={G3} vertical={false} />
                 <XAxis dataKey="month" tick={{ fill: '#7a9e8e', fontSize: 11 }} axisLine={{ stroke: G3 }} tickLine={false} />
-                <YAxis yAxisId="leads" tick={{ fill: '#7a9e8e', fontSize: 10 }} axisLine={{ stroke: G3 }} tickLine={false} width={30} allowDecimals={false} tickFormatter={v => Math.round(v).toString()} />
-                <YAxis yAxisId="cpl" orientation="right" tick={{ fill: '#7a9e8e', fontSize: 10 }} axisLine={false} tickLine={false} width={46}
+                <YAxis yAxisId="leads" tick={{ fill: '#7a9e8e', fontSize: 10 }} axisLine={{ stroke: G3 }} tickLine={false} width={CHART_AXIS_W} allowDecimals={false} tickFormatter={v => Math.round(v).toString()} />
+                <YAxis yAxisId="cpl" orientation="right" tick={{ fill: '#7a9e8e', fontSize: 10 }} axisLine={false} tickLine={false} width={CHART_RIGHT_INSET}
                   tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k€` : `${v}€`} />
                 <Tooltip
                   cursor={{ fill: 'rgba(255,255,255,0.04)' }}
@@ -2699,10 +2707,10 @@ export default function SimulateurSEO() {
               Chaque barre représente le volume de clics estimé du mois (croissance de +2 %/mois), réparti entre référencement classique (SEO) et moteurs de réponse génératifs (GEO : ChatGPT, Perplexity, AI Overviews…). La part GEO progresse de +4 pts par mois : 0 % au 1er mois, 44 % au 12e — illustration du glissement des recherches vers l&apos;IA générative.
             </div>
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={seoGeoData} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+              <BarChart data={seoGeoData} margin={{ top: 8, right: CHART_RIGHT_INSET, left: 0, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={G3} vertical={false} />
                 <XAxis dataKey="month" tick={{ fill: '#7a9e8e', fontSize: 11 }} axisLine={{ stroke: G3 }} tickLine={false} />
-                <YAxis tick={{ fill: '#7a9e8e', fontSize: 10 }} axisLine={false} tickLine={false} width={44}
+                <YAxis tick={{ fill: '#7a9e8e', fontSize: 10 }} axisLine={false} tickLine={false} width={CHART_AXIS_W}
                   tickFormatter={(v: number) => fmtN(v)} />
                 <Tooltip
                   cursor={{ fill: 'rgba(255,255,255,0.04)' }}
