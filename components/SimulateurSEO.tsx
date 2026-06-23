@@ -1477,8 +1477,16 @@ export default function SimulateurSEO() {
   const [creatingNewSpace, setCreatingNewSpace] = useState(false);
   const [newSpaceName, setNewSpaceName] = useState('');
   const [newSpaceError, setNewSpaceError] = useState('');
+  const canSaveReport = Boolean(session?.user?.isGlobalAdmin || workspaces.length > 0);
+  const isProspectConsultation = Boolean(session && !canSaveReport);
 
   const doSave = async (wsId: string | null) => {
+    if (!canSaveReport) {
+      setSaveState('error');
+      setSaveError('Mode consultation : les modifications de simulation ne peuvent pas être enregistrées.');
+      setTimeout(() => setSaveState('idle'), 6000);
+      return;
+    }
     setSaveState('saving');
     setSaveError('');
     const stateB64 = encodeState(state);
@@ -1522,7 +1530,7 @@ export default function SimulateurSEO() {
   };
 
   const genLink = () => {
-    if (saveState === 'saving') return;
+    if (saveState === 'saving' || !canSaveReport) return;
     if (reportId) {
       doSave(null);
     } else {
@@ -1785,7 +1793,11 @@ export default function SimulateurSEO() {
         {saveError && saveState === 'error' && (
           <div style={{ color: '#e05050', fontSize: 11, textAlign: 'right' }}>{saveError}</div>
         )}
+        {isProspectConsultation && (
+          <div style={{ color: '#7a9e8e', fontSize: 11, textAlign: 'right' }}>Mode consultation : vous pouvez simuler librement, sans enregistrer.</div>
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
+          {canSaveReport && (
           <button
             onClick={genLink}
             disabled={saveState === 'saving'}
@@ -1801,6 +1813,7 @@ export default function SimulateurSEO() {
           >
             {saveState === 'saving' ? '…' : saveState === 'saved' ? '✓ Enregistré !' : saveState === 'error' ? '✗ Erreur' : reportId ? '💾 Sauvegarder' : '💾 Enregistrer'}
           </button>
+          )}
           {(session?.user?.isGlobalAdmin || workspaces.some(w => w.role === 'owner')) && (
             <a
               href="/admin/rapports"

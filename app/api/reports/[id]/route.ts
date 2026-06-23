@@ -157,8 +157,9 @@ export async function PUT(
             sql: 'SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?',
             args: [workspaceId, session.user.id],
           });
-          if (!memberCheck.rows.length) {
-            return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
+          const role = memberCheck.rows[0]?.[0] as string | undefined;
+          if (!role || role === 'reader') {
+            return NextResponse.json({ error: 'Accès refusé : droits d’édition requis' }, { status: 403 });
           }
         } else {
           return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
