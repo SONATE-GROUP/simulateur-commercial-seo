@@ -18,6 +18,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'id and stateB64 are required' }, { status: 400 });
     }
 
+    if (!session.user.isGlobalAdmin) {
+      if (workspaceId) {
+        const memberCheck = await db.execute({
+          sql: 'SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?',
+          args: [workspaceId, session.user.id],
+        });
+        const role = memberCheck.rows[0]?.[0] as string | undefined;
+        if (role !== 'owner' && role !== 'editor') {
+          return NextResponse.json({ error: 'Accès refusé : droits d’édition requis' }, { status: 403 });
+        }
+      } else {
+        const editableWorkspaceCheck = await db.execute({
+          sql: `SELECT 1 FROM workspace_members
+                WHERE user_id = ? AND role IN ('owner', 'editor')
+                LIMIT 1`,
+          args: [session.user.id],
+        });
+        if (!editableWorkspaceCheck.rows.length) {
+          return NextResponse.json({ error: 'Accès refusé : droits d’édition requis' }, { status: 403 });
+        }
+      }
+    }
+
     await db.execute({
       sql: `INSERT OR REPLACE INTO reports (id, prospect, site_url, sector, state_b64, created_at, workspace_id, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
