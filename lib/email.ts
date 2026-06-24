@@ -1,24 +1,3 @@
-import nodemailer from 'nodemailer';
-
-function createTransport() {
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT ?? '587', 10);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-
-  if (!host || !user || !pass) {
-    // Fallback: log to console in dev/preview environments
-    return null;
-  }
-
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  });
-}
-
 export async function sendInvitationEmail({
   to,
   inviteUrl,
@@ -30,8 +9,11 @@ export async function sendInvitationEmail({
   invitedBy: string;
   workspaceName?: string;
 }) {
-  const from = process.env.SMTP_FROM ?? process.env.SMTP_USER ?? 'noreply@example.com';
+  const apiKey  = process.env.BREVO_API_KEY;
   const appName = 'Simulateur SEO';
+  const senderEmail = process.env.EMAIL_FROM_ADDRESS;
+  const senderName  = process.env.EMAIL_FROM_NAME ?? 'Simulateur SEO';
+  if (!senderEmail) throw new Error('EMAIL_FROM_ADDRESS non configurée');
 
   const workspaceLine = workspaceName
     ? `<p style="color:#555;">Vous aurez accès à l'espace : <strong>${workspaceName}</strong></p>`
@@ -57,21 +39,36 @@ export async function sendInvitationEmail({
 
   const text = `Vous avez été invité(e) à rejoindre ${appName} par ${invitedBy}.\n\nActivez votre compte ici : ${inviteUrl}\n\nCe lien expire dans 7 jours.`;
 
-  const transport = createTransport();
-  if (!transport) {
-    // Dev mode: print to console
-    console.log('\n=== INVITATION EMAIL (dev/no SMTP) ===');
+  if (!apiKey) {
+    console.log('\n=== INVITATION EMAIL (dev — BREVO_API_KEY manquante) ===');
     console.log(`To: ${to}`);
     console.log(`Invite URL: ${inviteUrl}`);
-    console.log('======================================\n');
+    console.log('=======================================================\n');
     return;
   }
 
-  await transport.sendMail({
-    from,
-    to,
-    subject: `Votre invitation à ${appName}`,
-    html,
-    text,
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': apiKey,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      sender:      { name: senderName, email: senderEmail },
+      to:          [{ email: to }],
+      subject:     `Votre invitation à ${appName}`,
+      htmlContent: html,
+      textContent: text,
+    }),
   });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    console.error('[Brevo] Erreur envoi email:', JSON.stringify(err));
+    throw new Error((err as { message?: string }).message ?? `Brevo HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  console.log('[Brevo] Email envoyé à', to, '— messageId:', data.messageId);
 }

@@ -50,6 +50,35 @@ export const authOptions: NextAuthOptions = {
         token.id            = user.id;
         token.isGlobalAdmin = user.isGlobalAdmin;
       }
+
+      // Recharge le statut admin depuis la base à chaque requête, pour que les changements
+      // de droits (ex : promotion admin) s'appliquent sans avoir à se reconnecter.
+      if (token.id) {
+        await initDb();
+        const adminRes = await db.execute({
+          sql: 'SELECT is_global_admin FROM users WHERE id = ?',
+          args: [token.id as string],
+        });
+        if (adminRes.rows.length) {
+          token.isGlobalAdmin = Boolean(adminRes.rows[0][0]);
+        }
+      }
+
+      // Mise à jour last_login_at au plus une fois par heure
+      const now       = Date.now();
+      const lastTrack = (token.lastTrackedAt as number) ?? 0;
+      if (token.id && now - lastTrack > 60 * 60 * 1000) {
+        token.lastTrackedAt = now;
+        const iso = new Date(now).toISOString();
+        await db.execute({
+          sql: `UPDATE users SET
+                  last_login_at  = ?,
+                  login_count    = COALESCE(login_count, 0) + 1,
+                  first_login_at = CASE WHEN first_login_at IS NULL THEN ? ELSE first_login_at END
+                WHERE id = ?`,
+          args: [iso, iso, token.id],
+        });
+      }
       return token;
     },
     async session({ session, token }) {

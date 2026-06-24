@@ -68,19 +68,33 @@ export default function ConfigurationPage() {
       </div>
 
       <div style={{ backgroundColor: '#1a3d2e', border: `1px solid ${GREEN}33`, borderRadius: 10, padding: '14px 18px', marginBottom: 32, fontSize: 13, color: MUTED, lineHeight: 1.6 }}>
-        <strong style={{ color: GREEN }}>Zone admin</strong> — Ces paramètres définissent le comportement du simulateur.
+        <strong style={{ color: GREEN }}>Zone admin</strong> : Ces paramètres définissent le comportement du simulateur.
         Toute modification impacterait tous les nouveaux rapports générés. L'édition sera disponible dans une prochaine version.
       </div>
 
       <SectionCard title="Formule de position par mot-clé" description="Calcule la position estimée dans les résultats de recherche pour chaque mot-clé, en fonction du budget, de l'autorité de domaine et de la santé technique du site.">
         <FormulaBlock
-          formula={`coeffSante   = max(0.01, healthScore / 80)\nbudgetParKw  = budgetCategorie / nombreMotsClésCatégorie\nlogBudget    = ln(1 + max(0, budgetParKw) / 20)\ndénominateur = 225 × DA × (coeffSante / 70) × √(nbMotsClés) × logBudget\nposRaw       = (difficulté^1.9 × facteurProximité) / dénominateur\nposition     = clamp(round(posRaw), 1, 11)`}
-          legend="DA = Domain Authority (1–100). Position 11 = hors top 10 (trafic nul). Le coefficient de santé pénalise les sites avec un score Semrush faible."
+          formula={`coeffSante      = max(0.01, healthScore / 80)
+budgetCumulé    = budget réellement alloué au mot-clé
+freinBudget     = (budgetCumulé / (budgetCumulé + 500))^1.35
+accelCatégorie  = min(3.5, 1 + 0.35 × (motsClésAvecBudget − 1)^1.2)
+logBudget       = ln(1 + budgetCumulé / 20) × freinBudget × accelCatégorie
+dénominateur    = 225 × DA × (coeffSante / 70) × √(nbMotsClés) × logBudget
+posRaw          = (difficulté^1.9 × facteurProximité) / dénominateur
+position        = clamp(round(posRaw), 1, 11)`}
+          legend="DA = Domain Authority (1–100). Position 11 = hors top 10 (trafic nul). Les petits budgets sont fortement freinés ; l'accélération vient progressivement du nombre de mots-clés déjà traités dans la catégorie."
         />
         <div style={{ marginTop: 16 }}>
           <p style={{ fontSize: 12, color: MUTED, marginBottom: 8 }}>Constantes de la formule :</p>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            {[{ label: 'Multiplicateur de base', value: '225' }, { label: 'Diviseur santé', value: '70' }, { label: 'Exposant difficulté', value: '1.9' }, { label: 'Diviseur log budget', value: '20' }].map(({ label, value }) => (
+            {[
+              { label: 'Multiplicateur de base', value: '225' },
+              { label: 'Diviseur santé', value: '70' },
+              { label: 'Exposant difficulté', value: '1.9' },
+              { label: 'Frein petits budgets', value: '500 € ^ 1.35' },
+              { label: 'Accélération catégorie', value: '0.35 × mots-clés^1.2' },
+              { label: 'Plafond accélération', value: '3.5×' },
+            ].map(({ label, value }) => (
               <div key={label} style={{ backgroundColor: G5, borderRadius: 8, padding: '10px 16px', fontSize: 13, flex: '1 1 160px' }}>
                 <div style={{ color: MUTED, fontSize: 11, marginBottom: 4 }}>{label}</div>
                 <div style={{ fontWeight: 700, color: ORANGE, fontFamily: 'monospace', fontSize: 16 }}>{value}</div>
@@ -96,7 +110,7 @@ export default function ConfigurationPage() {
             <div key={position} style={{ backgroundColor: G5, borderRadius: 8, padding: '12px 14px', textAlign: 'center', border: `1px solid ${position <= 3 ? GREEN + '44' : G3}` }}>
               <div style={{ fontSize: 11, color: MUTED, marginBottom: 4 }}>Position {position}</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: position === 1 ? GREEN : position <= 3 ? '#a8d5b5' : CREAM, fontFamily: 'monospace' }}>
-                {ctr > 0 ? `${ctr}%` : '—'}
+                {ctr > 0 ? `${ctr}%` : '-'}
               </div>
             </div>
           ))}
@@ -125,7 +139,7 @@ export default function ConfigurationPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {[
             { intention: 'Transactionnel', def: 4.0, description: 'Visiteur prêt à acheter / demander un devis (ex : "prix logiciel CRM")' },
-            { intention: 'Pré-achat', def: 2.0, description: 'Comparaison, sélection (ex : "meilleur logiciel CRM")' },
+            { intention: 'Navigationnelle', def: 2.0, description: 'Comparaison, sélection (ex : "meilleur logiciel CRM")' },
             { intention: 'Informationnel commercial', def: 1.0, description: 'Découverte de solutions (ex : "comment gérer sa prospection")' },
             { intention: 'Informationnel', def: 0.5, description: 'Contenu éducatif pur, peu de conversion directe' },
           ].map(({ intention, def, description }) => (
@@ -153,7 +167,7 @@ export default function ConfigurationPage() {
             </div>
           ))}
         </div>
-        <div style={{ fontSize: 12, color: MUTED }}>À M12 le potentiel est à 92% — la pleine maturité est atteinte au cours de l'année 2.</div>
+        <div style={{ fontSize: 12, color: MUTED }}>À M12 le potentiel est à 92%. La pleine maturité est atteinte au cours de l'année 2.</div>
       </SectionCard>
 
       <SectionCard title="Formules de calcul du ROI" description="Le ROI est calculé sur la base du CA mensuel à pleine maturité, pondéré par les mois effectifs d'activité.">

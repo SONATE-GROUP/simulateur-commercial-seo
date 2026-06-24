@@ -5,7 +5,7 @@ import { useSession, signOut } from 'next-auth/react';
 import * as XLSX from 'xlsx';
 import {
   ComposedChart, BarChart, Bar, Line, Cell, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine, Legend,
+  Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 
 /* ─── TYPES ──────────────────────────────────────────────────── */
@@ -19,6 +19,8 @@ interface Category {
   coeff?: 1 | 2 | 5 | 10 | 20;
 }
 
+type Zone = 'chalandise' | 'france';
+
 interface Keyword {
   id: string;
   keyword: string;
@@ -28,6 +30,7 @@ interface Keyword {
   intention: Intention;
   topic: string;
   categoryId: string;
+  zone: Zone;
 }
 
 interface SimState {
@@ -52,6 +55,9 @@ interface SimState {
   tauxRdv: number;
   tauxClosing: number;
   categories: Category[];
+  budgetCatsHidden: boolean;
+  chalandisePercent: number;
+  breakEvenMode: 'mensuel' | 'cumule';
 }
 
 /* ─── CONSTANTS ──────────────────────────────────────────────── */
@@ -60,22 +66,69 @@ const CTR_TABLE: Record<number, number> = {
   6: 0.059, 7: 0.049, 8: 0.043, 9: 0.037, 10: 0.034, 11: 0,
 };
 
+// Linear interpolation of CTR between two integer ranks, for a continuous
+// (non-rounded) position. Used to detect small budget-driven ranking gains
+// that a rounded position comparison would mask as zero.
+function interpolateCTR(rawPos: number): number {
+  const clamped = Math.min(Math.max(rawPos, 1), 11);
+  const lower = Math.floor(clamped);
+  const upper = Math.ceil(clamped);
+  if (lower === upper) return CTR_TABLE[lower] ?? 0;
+  const frac = clamped - lower;
+  return (CTR_TABLE[lower] ?? 0) + ((CTR_TABLE[upper] ?? 0) - (CTR_TABLE[lower] ?? 0)) * frac;
+}
+
 const INTENT_LABEL: Record<number, string> = {
-  1: 'Transactionnel', 2: 'Pré-achat', 3: 'Commerciale', 4: 'Informationnel',
+  1: 'Transactionnel', 2: 'Navigationnelle', 3: 'Commerciale', 4: 'Informationnel',
 };
 
 const INTENT_COLOR: Record<number, string> = {
   1: '#e8571a', 2: '#f59e0b', 3: '#3b82f6', 4: '#6b7280',
 };
 
+// Budget → "ranking power" curve: the first euros spent on a keyword are
+// intentionally under-powered, then the curve accelerates once the category
+// has several keywords with budget. This avoids unrealistic early jumps in
+// ranking while rewarding topical authority built by treating a cluster.
+const BUDGET_THRESH      = 500;  // € — higher threshold = slower impact on small budgets
+const BUDGET_DAMP_EXP    = 1.35; // >1 → stronger damping before the keyword has traction
+const ACCEL_PER_KW       = 0.35; // synergy boost per extra funded keyword in category
+const ACCEL_KW_EXP       = 1.2;  // non-linear acceleration as the cluster gets covered
+const MAX_CATEGORY_ACCEL = 3.5;  // cap to keep large keyword lists realistic
+function computeLogBudget(cumBudget: number, nbActiveInCat: number): number {
+  if (cumBudget <= 0) return 0;
+  const activeBoost = Math.pow(Math.max(0, nbActiveInCat - 1), ACCEL_KW_EXP);
+  const categoryAccel = Math.min(MAX_CATEGORY_ACCEL, 1 + ACCEL_PER_KW * activeBoost);
+  const damping = Math.pow(cumBudget / (cumBudget + BUDGET_THRESH), BUDGET_DAMP_EXP);
+  return Math.log(1 + cumBudget / 20) * damping * categoryAccel;
+}
+
+// Piecewise-linear coefficient from the Semrush Health Score:
+// 0-50  → +0.014 per point
+// 51-70 → +0.009 per point
+// 71-100 → +0.004 per point
+function computeHealthCoeff(score: number): number {
+  const s = Math.min(Math.max(score, 0), 100);
+  if (s <= 50) return s * 0.014;
+  if (s <= 70) return 0.7 + (s - 50) * 0.009;
+  return 0.88 + (s - 70) * 0.004;
+}
+
 const DEFAULT_KEYWORDS: Keyword[] = [
-  { id: '1', keyword: 'acheter graines tomates',   volume: 2400, difficulty: 35, proximity: 1, intention: 1, topic: 'Graines tomates', categoryId: 'cat1' },
-  { id: '2', keyword: 'meilleures graines potager', volume: 1800, difficulty: 42, proximity: 2, intention: 2, topic: 'Graines potager', categoryId: 'cat1' },
-  { id: '3', keyword: 'semences bio pas cher',      volume: 3200, difficulty: 38, proximity: 1, intention: 1, topic: 'Semences bio',    categoryId: 'cat1' },
-  { id: '4', keyword: 'comment semer des fleurs',   volume: 5400, difficulty: 25, proximity: 3, intention: 4, topic: 'Guide semis',     categoryId: 'cat2' },
-  { id: '5', keyword: 'graines de courge',           volume: 2100, difficulty: 30, proximity: 2, intention: 2, topic: 'Graines courge',  categoryId: 'cat1' },
-  { id: '6', keyword: 'jardinerie en ligne',         volume: 8900, difficulty: 65, proximity: 3, intention: 1, topic: 'Jardinerie',      categoryId: 'cat2' },
+  { id: '1', keyword: 'acheter graines tomates',   volume: 2400, difficulty: 35, proximity: 1, intention: 1, topic: 'Graines tomates', categoryId: 'cat1', zone: 'chalandise' },
+  { id: '2', keyword: 'meilleures graines potager', volume: 1800, difficulty: 42, proximity: 2, intention: 2, topic: 'Graines potager', categoryId: 'cat1', zone: 'chalandise' },
+  { id: '3', keyword: 'semences bio pas cher',      volume: 3200, difficulty: 38, proximity: 1, intention: 1, topic: 'Semences bio',    categoryId: 'cat1', zone: 'chalandise' },
+  { id: '4', keyword: 'comment semer des fleurs',   volume: 5400, difficulty: 25, proximity: 3, intention: 4, topic: 'Guide semis',     categoryId: 'cat2', zone: 'chalandise' },
+  { id: '5', keyword: 'graines de courge',           volume: 2100, difficulty: 30, proximity: 2, intention: 2, topic: 'Graines courge',  categoryId: 'cat1', zone: 'chalandise' },
+  { id: '6', keyword: 'jardinerie en ligne',         volume: 8900, difficulty: 65, proximity: 3, intention: 1, topic: 'Jardinerie',      categoryId: 'cat2', zone: 'chalandise' },
 ];
+
+// Effective monthly volume after applying the catchment-area correction:
+// "chalandise" keywords keep 100% of their volume, "france" keywords are
+// scaled down to the share of the French population actually concerned.
+function getEffectiveVolume(kw: Keyword, chalandisePercent: number): number {
+  return kw.zone === 'france' ? kw.volume * (chalandisePercent / 100) : kw.volume;
+}
 
 const MONTH_NAMES = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
 
@@ -108,6 +161,9 @@ const INITIAL: SimState = {
   tauxRdv: 60,
   tauxClosing: 30,
   categories: [],
+  budgetCatsHidden: false,
+  chalandisePercent: 100,
+  breakEvenMode: 'mensuel',
 };
 
 /* ─── PALETTE ────────────────────────────────────────────────── */
@@ -216,16 +272,16 @@ const inputLight: CSSProperties = {
 
 /* ─── SLIDER ─────────────────────────────────────────────────── */
 function Slider({
-  label, value, min, max, step = 1, unit = '', onChange, hint, light = false,
+  label, value, min, max, step = 1, unit = '', onChange, hint, light = false, bold = false,
 }: {
   label: string; value: number; min: number; max: number;
-  step?: number; unit?: string; onChange: (v: number) => void; hint?: string; light?: boolean;
+  step?: number; unit?: string; onChange: (v: number) => void; hint?: string; light?: boolean; bold?: boolean;
 }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-        <span style={{ color: light ? L_MED : '#a8c5b5', fontSize: 12 }}>{label}</span>
-        <span style={{ color: ORANGE, fontWeight: 700, fontSize: 15 }}>{value}{unit}</span>
+        <span style={{ color: light ? L_MED : '#a8c5b5', fontSize: bold ? 14 : 12, fontWeight: bold ? 700 : 400 }}>{label}</span>
+        <span style={{ color: ORANGE, fontWeight: 700, fontSize: bold ? 18 : 15 }}>{value}{unit}</span>
       </div>
       {hint && <div style={{ color: light ? L_MED : '#7a9e8e', fontSize: 11, marginBottom: 4 }}>{hint}</div>}
       <input
@@ -299,6 +355,11 @@ function ConversionFunnel({ stages, rates }: {
 }
 
 /* ─── CUSTOM TOOLTIP ─────────────────────────────────────────── */
+const CHART_SERIES_LABEL: Record<string, string> = {
+  budget: 'Budget mensuel', ca: 'CA mensuel',
+  budgetCumule: 'Budget cumulé', caCumule: 'CA cumulé',
+};
+
 function ChartTooltip({ active, payload, label }: {
   active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string;
 }) {
@@ -308,7 +369,7 @@ function ChartTooltip({ active, payload, label }: {
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ display: 'flex', gap: 10, justifyContent: 'space-between' }}>
-          <span style={{ color: p.color }}>{p.name === 'budget' ? 'Budget mensuel' : 'CA mensuel'}</span>
+          <span style={{ color: p.color }}>{CHART_SERIES_LABEL[p.name] ?? p.name}</span>
           <span style={{ fontWeight: 600 }}>{fmtC(p.value)}</span>
         </div>
       ))}
@@ -368,10 +429,26 @@ export default function SimulateurSEO() {
   const [saveState, setSaveState]     = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [reportId, setReportId]       = useState<string | null>(null);
   const [openCats, setOpenCats] = useState<Set<string>>(new Set(['cat1', 'cat2']));
+  const [expandedKws, setExpandedKws] = useState<Set<string>>(new Set());
+  const [budgetTooltipKwId, setBudgetTooltipKwId] = useState<string | null>(null);
+  const toggleKwExpand = (id: string) => setExpandedKws(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
   const [workspaces, setWorkspaces]   = useState<{ id: string; name: string; role: string }[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>('');
   const resultsRef  = useRef<HTMLDivElement>(null);
   const xlsxInputRef = useRef<HTMLInputElement>(null);
+
+  /* Unsaved-changes tracking — skipDirtyRef ignores state changes caused by
+     the initial load (URL/report fetch) so only real user edits count. */
+  const [isDirty, setIsDirty] = useState(false);
+  const skipDirtyRef = useRef(true);
+  useEffect(() => {
+    if (skipDirtyRef.current) { skipDirtyRef.current = false; return; }
+    setIsDirty(true);
+  }, [state]);
 
   const toggleCat = (id: string) => setOpenCats(prev => {
     const next = new Set(prev);
@@ -384,7 +461,8 @@ export default function SimulateurSEO() {
     crTransactionnel, crPreAchat, crIntermediaire, crInformationnel,
     budgetRatio,
     seasonalityEnabled, startMonth, highSeasonMonths, highSeasonMultiplier,
-    kwMultiplier, businessType, tauxRdv, tauxClosing, categories,
+    kwMultiplier, businessType, tauxRdv, tauxClosing, categories, budgetCatsHidden,
+    chalandisePercent, breakEvenMode,
   } = state;
 
   const cr: Record<Intention, number> = {
@@ -399,14 +477,17 @@ export default function SimulateurSEO() {
     const migrate = (s: SimState): SimState => ({
       ...s,
       categories: (s.categories ?? []).map(c => ({ ...c, budget: c.budget ?? 700 })),
+      keywords: (s.keywords ?? []).map(k => ({ ...k, zone: k.zone ?? 'chalandise' })),
+      chalandisePercent: s.chalandisePercent ?? 100,
+      breakEvenMode: s.breakEvenMode ?? 'mensuel',
     });
     if (data) {
-      try { setState(migrate(decodeState(data))); } catch { /* ignore */ }
+      try { skipDirtyRef.current = true; setState(migrate(decodeState(data))); } catch { /* ignore */ }
     } else if (report) {
       setReportId(report);
       fetch(`/api/reports/${report}`)
         .then(r => r.json())
-        .then(({ stateB64 }) => { if (stateB64) setState(migrate(decodeState(stateB64))); })
+        .then(({ stateB64 }) => { if (stateB64) { skipDirtyRef.current = true; setState(migrate(decodeState(stateB64))); } })
         .catch(() => { /* ignore */ });
     }
   }, []);
@@ -427,118 +508,352 @@ export default function SimulateurSEO() {
       .catch(() => { /* ignore */ });
   }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Per-keyword results */
-  const kwResults = useMemo(() => {
-    const coeffSante = Math.max(0.01, healthScore / 80);
-    // Pre-compute per-category stats (budget + keyword count + coeff)
-    const catStats: Record<string, { budget: number; nbKws: number; coeff: number }> = {};
-    categories.forEach(cat => {
-      catStats[cat.id] = { budget: cat.budget ?? 700, nbKws: 0, coeff: cat.coeff ?? 1 };
-    });
-    keywords.forEach(kw => {
-      if (catStats[kw.categoryId]) catStats[kw.categoryId].nbKws++;
-    });
+  /* Keep a live ref to reportId so the engagement tracker below doesn't need to restart
+     (and lose its pending counters) every time a report gets saved/loaded */
+  const reportIdRef = useRef<string | null>(null);
+  useEffect(() => { reportIdRef.current = reportId; }, [reportId]);
 
-    // proximity: 1=exact(×1.0), 2=très proche(×1.5), 3=thématique(×3.0)
+  /* Track time spent + interactions for the whole session (periodic heartbeat + flush on
+     leave), as soon as the user is logged in — whether or not a report is open/saved.
+     When a report is open, the same numbers are also added to that report's totals. */
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    let lastTick = Date.now();
+    let pendingInteractions = 0;
+
+    const onInteraction = () => { pendingInteractions++; };
+    document.addEventListener('click', onInteraction);
+    document.addEventListener('input', onInteraction);
+
+    const post = (url: string, body: string, useBeacon: boolean) => {
+      if (useBeacon && navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+      } else {
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => { /* ignore */ });
+      }
+    };
+
+    const flush = (useBeacon: boolean) => {
+      const now = Date.now();
+      const seconds = document.visibilityState === 'visible' ? Math.round((now - lastTick) / 1000) : 0;
+      lastTick = now;
+      const interactions = pendingInteractions;
+      pendingInteractions = 0;
+      if (seconds <= 0 && interactions === 0) return;
+
+      const body = JSON.stringify({ seconds, interactions });
+      post('/api/users/me/engagement', body, useBeacon);
+      if (reportIdRef.current) post(`/api/reports/${reportIdRef.current}/engagement`, body, useBeacon);
+    };
+
+    const interval = setInterval(() => flush(false), 30000);
+    const onVisibilityChange = () => { if (document.visibilityState === 'hidden') flush(true); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', () => flush(true));
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('click', onInteraction);
+      document.removeEventListener('input', onInteraction);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      flush(true);
+    };
+  }, [session?.user?.id]);
+
+  /* Budget allocation per keyword over 12 months (sudoku-style) */
+  const kwAllocations = useMemo(() => {
+    const CHUNK = 100; // € per allocation step
     const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
-    return keywords.map(kw => {
-      const stats       = catStats[kw.categoryId] ?? { budget: 700, nbKws: 1, coeff: 1 };
-      const nbKws       = Math.max(1, stats.nbKws);
-      const budgetPerKw = stats.budget / nbKws;
-      const logBudget   = Math.log(1 + Math.max(0, budgetPerKw) / 20);
-      const denom       = 225 * da * (coeffSante / 70) * Math.sqrt(nbKws) * logBudget;
-      const posRaw      = denom > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / denom : 100;
-      const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
-      const baseCtr = CTR_TABLE[pos] ?? 0;
-      const ctr    = baseCtr * (budgetRatio / 100);
-      const traffic = kw.volume * ctr;
-      const leads  = traffic * (cr[kw.intention as Intention] / 100);
-      const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
-      const ca     = leads * basketValue * leadConv;
-      return { ...kw, pos, ctr, traffic, leads, ca };
+    const coeffSante = Math.max(0.01, computeHealthCoeff(healthScore));
+
+    // Per-category: budget (scaled by budgetRatio), keyword count, coeff
+    const catBudget: Record<string, number> = {};
+    const catNbKws:  Record<string, number> = {};
+    const catCoeff:  Record<string, number> = {};
+    categories.forEach(cat => {
+      catBudget[cat.id] = (cat.budget ?? 700) * (budgetRatio / 100);
+      catNbKws[cat.id]  = 0;
+      catCoeff[cat.id]  = cat.coeff ?? 1;
     });
-  }, [keywords, categories, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing]);
+    keywords.forEach(kw => { if (catNbKws[kw.categoryId] !== undefined) catNbKws[kw.categoryId]++; });
 
-  /* Totals */
-  const totals = useMemo(() => {
-    const rawLeads   = kwResults.reduce((s, k) => s + k.leads, 0);
-    // For lead mode, CA is gated by RDV + closing rates
-    const leadConv   = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
-    const rawCA      = kwResults.reduce((s, k) => s + k.leads * basketValue * leadConv, 0);
-    const totalLeads   = rawLeads   * kwMultiplier;
-    const totalCA      = rawCA      * kwMultiplier;
-    const totalTraffic = kwResults.reduce((s, k) => s + k.traffic, 0) * kwMultiplier;
-    const totalImpressions = keywords.reduce((s, k) => s + k.volume, 0) * kwMultiplier;
-    const topics    = new Set(keywords.map(k => k.topic).filter(Boolean));
-    const nbPages   = (topics.size || keywords.length) * kwMultiplier;
-    const nbKeywords = keywords.length * kwMultiplier;
-    const budgetMensuel = categories.reduce((s, c) => s + (c.budget ?? 700), 0) * (budgetRatio / 100);
-    const budgetTotal  = budgetMensuel * 12;
-    const roi1an       = budgetTotal > 0 ? ((totalCA * 5.83 - budgetTotal) / budgetTotal) * 100 : 0;
-    const roiMult1an   = budgetTotal > 0 ? (totalCA * 5.83) / budgetTotal : 0;
-    const roi2ans      = budgetTotal > 0 ? ((totalCA * 18.5 - budgetTotal) / budgetTotal) * 100 : 0;
-    const roiMult      = budgetTotal > 0 ? (totalCA * 18.5) / budgetTotal : 0;
-    // Extra lead-mode values (unscaled, for funnel display)
-    const baseLeads  = rawLeads;
-    const baseRdv    = baseLeads * (tauxRdv / 100);
-    const baseClosing = baseRdv * (tauxClosing / 100);
-    return { totalCA, totalLeads, totalTraffic, totalImpressions, nbPages, nbKeywords, budgetMensuel, budgetTotal, roi1an, roiMult1an, roi2ans, roiMult, baseLeads, baseRdv, baseClosing };
-  }, [kwResults, keywords, categories, budgetRatio, kwMultiplier, businessType, tauxRdv, tauxClosing, basketValue]);
+    // Compute posRaw for a keyword given its individual cumulative budget and
+    // how many keywords in its category currently have budget activated
+    const getPosRaw = (kw: Keyword, cumBudget: number, nbActiveInCat: number): number => {
+      const nb  = Math.max(1, catNbKws[kw.categoryId] ?? 1);
+      const lb  = computeLogBudget(cumBudget, nbActiveInCat);
+      if (lb === 0) return 100;
+      const den = 225 * da * (coeffSante / 70) * Math.sqrt(nb) * lb;
+      return den > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / den : 100;
+    };
+    const getPos = (raw: number) => Math.min(Math.max(Math.round(raw), 1), 11);
 
-  /* Monthly projection */
-  const { monthlyData, breakEvenMonth } = useMemo(() => {
-    const { totalCA, budgetMensuel, budgetTotal } = totals;
-    const monthlyBudget = budgetMensuel;
+    // Potential = Volume × cr[intention] × proximityWeight × ΔCTR / difficulty²
+    // Proximity weight prioritizes exact-match keywords over thematic ones
+    // (proximity 1=exact, 2=très proche, 3=thématique → weight 3, 2, 1)
+    const POTENTIAL_PROX_WEIGHT: Record<number, number> = { 1: 3, 2: 2, 3: 1 };
+    // Gain réel obtenu en ajoutant CHUNK au budget cumulé : compare la position
+    // actuelle à la position après ajout du chunk, plutôt qu'un gain théorique
+    // vers la position-1 qui peut ne jamais être atteinte (budget gaspillé sans effet).
+    const getPotential = (kw: Keyword, cumBudget: number, nbActiveInCat: number): number => {
+      const rawPos = getPosRaw(kw, cumBudget, nbActiveInCat);
+      if (rawPos <= 1) return 0; // already at best position
+      // Use continuous (non-rounded) positions for the gain so that a single
+      // CHUNK of budget still registers a (small) improvement even when it
+      // isn't enough to cross an integer rank boundary — otherwise the
+      // allocation loop sees gain=0 for every keyword and stops allocating
+      // budget entirely.
+      const rawPosAfter = getPosRaw(kw, cumBudget + CHUNK, nbActiveInCat);
+      const gain = interpolateCTR(rawPosAfter) - interpolateCTR(rawPos);
+      if (gain <= 0) return 0;
+      const crVal = cr[kw.intention as Intention]; // already in %
+      const diff2 = (kw.difficulty || 1) * (kw.difficulty || 1);
+      const proxWeight = POTENTIAL_PROX_WEIGHT[kw.proximity] ?? 1;
+      return getEffectiveVolume(kw, chalandisePercent) * crVal * proxWeight * gain / diff2;
+    };
 
-    // Build seasonal weights (one per campaign month, mapped to calendar months)
-    let weights: number[];
-    if (seasonalityEnabled) {
-      weights = Array.from({ length: 12 }, (_, i) => {
-        const calMonth = (startMonth + i) % 12;
-        return highSeasonMonths[calMonth] ? highSeasonMultiplier : 1;
+    // Initialize per-keyword tracking
+    const kwBudgetPerMonth: Record<string, number[]> = {};
+    const kwCumBudget:      Record<string, number>   = {};
+    const kwFirstMonth:     Record<string, number | null> = {};
+    const catActiveCount:   Record<string, number>   = {};
+    const catActiveCountPerMonth: Record<string, number[]> = {};
+    const catSpent:         Record<string, number>   = {};
+    keywords.forEach(kw => {
+      kwBudgetPerMonth[kw.id] = Array(12).fill(0);
+      kwCumBudget[kw.id]      = 0;
+      kwFirstMonth[kw.id]     = null;
+    });
+    categories.forEach(cat => {
+      catActiveCount[cat.id]        = 0;
+      catActiveCountPerMonth[cat.id] = Array(12).fill(0);
+      catSpent[cat.id]              = 0;
+    });
+
+    // 12-month allocation loop
+    for (let m = 0; m < 12; m++) {
+      // Allocate each category's monthly budget in CHUNK-€ increments
+      categories.forEach(cat => {
+        const monthly = catBudget[cat.id] ?? 0;
+        if (monthly <= 0) return;
+        const catKws = keywords.filter(kw => kw.categoryId === cat.id);
+        if (catKws.length === 0) return;
+
+        let remaining = monthly;
+        while (remaining > 0) {
+          const chunk = Math.min(CHUNK, remaining);
+          const nbActiveInCat = Math.max(1, catActiveCount[cat.id]);
+          // Find keyword with highest potential given current cumulative budgets
+          let bestKw: Keyword | null = null;
+          let bestPot = -Infinity;
+          for (const kw of catKws) {
+            const pot = getPotential(kw, kwCumBudget[kw.id], nbActiveInCat);
+            if (pot > bestPot) { bestPot = pot; bestKw = kw; }
+          }
+          if (!bestKw || bestPot <= 0) break;
+
+          const wasInactive = kwCumBudget[bestKw.id] === 0;
+          kwCumBudget[bestKw.id]          += chunk;
+          kwBudgetPerMonth[bestKw.id][m]  += chunk;
+          catSpent[cat.id]                += chunk;
+          if (kwFirstMonth[bestKw.id] === null) kwFirstMonth[bestKw.id] = m;
+          if (wasInactive) catActiveCount[cat.id]++;
+          remaining -= chunk;
+        }
       });
-    } else {
-      weights = Array(12).fill(1);
+      // Snapshot active-keyword count per category at the end of month m
+      categories.forEach(cat => { catActiveCountPerMonth[cat.id][m] = catActiveCount[cat.id]; });
     }
 
-    // Use the ramp-up curve (same as the histogram) to distribute monthly CA & leads
-    const { totalLeads } = totals;
-    // Closed clients per month at full maturity (fractional)
-    const closedLeadsAtMaturity = basketValue > 0 ? totalCA / basketValue : 0;
-    // Accumulate fractional clients to assign whole-client CA in the right months
-    let cumulativeClients = 0;
-    let intClientsSoFar = 0;
-    let bev = -1;
-    const data = Array.from({ length: 12 }, (_, i) => {
-      const m = i + 1;
-      const calMonth = (startMonth + i) % 12;
-      const label = seasonalityEnabled ? MONTH_NAMES[calMonth] : `M${m}`;
-      const rampPct = RAMP_UP_DATA[i].pct / 100;
-      const leads = totalLeads * rampPct * weights[i];
-      cumulativeClients += closedLeadsAtMaturity * rampPct * weights[i];
-      const newIntClients = Math.floor(cumulativeClients) - intClientsSoFar;
-      intClientsSoFar = Math.floor(cumulativeClients);
-      const ca = newIntClients * basketValue;
-      // Break-even = first month where monthly CA covers monthly budget cost
-      if (bev === -1 && ca >= monthlyBudget) bev = m;
-      const cplMonth = leads > 0.5 ? Math.round(monthlyBudget / leads) : null;
-      return { month: label, budget: Math.round(monthlyBudget), ca: Math.round(ca), leads: Math.round(leads), cplMonth, isBev: bev === m };
+    // Build result map
+    const result: Record<string, {
+      budgetPerMonth: number[];
+      cumulativePerMonth: number[];
+      firstMonthIdx: number | null;
+      totalBudget: number;
+      catCoeff: number;
+      nbKwsInCat: number;
+      activeKwsPerMonth: number[];
+      totalActiveKws: number;
+    }> = {};
+    keywords.forEach(kw => {
+      const bpm = kwBudgetPerMonth[kw.id];
+      const cpm = bpm.reduce<number[]>((acc, b) => {
+        acc.push((acc[acc.length - 1] ?? 0) + b);
+        return acc;
+      }, []);
+      const activeKwsPerMonth = catActiveCountPerMonth[kw.categoryId] ?? Array(12).fill(1);
+      result[kw.id] = {
+        budgetPerMonth:     bpm,
+        cumulativePerMonth: cpm,
+        firstMonthIdx:      kwFirstMonth[kw.id],
+        activeKwsPerMonth,
+        totalActiveKws:     activeKwsPerMonth[11] ?? 1,
+        totalBudget:        cpm[11] ?? 0,
+        catCoeff:           catCoeff[kw.categoryId] ?? 1,
+        nbKwsInCat:         catNbKws[kw.categoryId] ?? 1,
+      };
     });
+    return result;
+  }, [keywords, categories, da, healthScore, budgetRatio, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, chalandisePercent]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Per-keyword results */
+  const kwResults = useMemo(() => {
+    const PROX_FACTOR: Record<number, number> = { 1: 1.0, 2: 1.5, 3: 3.0 };
+    const coeffSante = Math.max(0.01, computeHealthCoeff(healthScore));
+
+    return keywords.map(kw => {
+      const alloc    = kwAllocations[kw.id];
+      const nb       = Math.max(1, alloc?.nbKwsInCat ?? 1);
+      const coeff    = alloc?.catCoeff ?? 1;
+      const totalBudget = alloc?.totalBudget ?? 0;
+
+      // Position at M+12 (full year cumulative budget + active-keyword synergy)
+      const totalActiveKws = alloc?.totalActiveKws ?? 1;
+      const lb12   = computeLogBudget(totalBudget, totalActiveKws);
+      const den12  = lb12 > 0 ? 225 * da * (coeffSante / 70) * Math.sqrt(nb) * lb12 : 0;
+      const posRaw = den12 > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / den12 : 100;
+      const pos    = Math.min(Math.max(Math.round(posRaw), 1), 11);
+
+      // Monthly positions based on actual cumulative budget + active-keyword count at each month
+      const activeKwsPerMonth = alloc?.activeKwsPerMonth ?? Array(12).fill(1);
+      const monthlyPos = (alloc?.cumulativePerMonth ?? Array(12).fill(0)).map((cumBudget, i) => {
+        if (cumBudget === 0) return 11;
+        const lb = computeLogBudget(cumBudget, activeKwsPerMonth[i] ?? 1);
+        const d  = lb > 0 ? 225 * da * (coeffSante / 70) * Math.sqrt(nb) * lb : 0;
+        const pr = d > 0 ? (Math.pow(kw.difficulty, 1.9) * (PROX_FACTOR[kw.proximity] ?? 1)) / d : 100;
+        return Math.min(Math.max(Math.round(pr), 1), 11);
+      });
+
+      const baseCtr = CTR_TABLE[pos] ?? 0;
+      const ctr     = baseCtr * (budgetRatio / 100);
+      const traffic = getEffectiveVolume(kw, chalandisePercent) * ctr * coeff;
+      const leads   = traffic * (cr[kw.intention as Intention] / 100);
+      const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
+      const ca      = leads * basketValue * leadConv;
+
+      return {
+        ...kw, pos, monthlyPos, ctr, traffic, leads, ca, coeff,
+        allocatedBudget: totalBudget,
+        firstMonth: alloc?.firstMonthIdx !== null && alloc?.firstMonthIdx !== undefined
+          ? alloc.firstMonthIdx + 1 : null,
+        budgetPerMonth: alloc?.budgetPerMonth ?? Array(12).fill(0),
+      };
+    });
+  }, [kwAllocations, keywords, da, healthScore, basketValue, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, budgetRatio, businessType, tauxRdv, tauxClosing, chalandisePercent]);
+
+  /* Monthly projection — computed directly from per-keyword monthly positions */
+  const { monthlyData, breakEvenMonth } = useMemo(() => {
+    const monthlyBudget = categories.reduce((s, c) => s + (c.budget ?? 700), 0) * (budgetRatio / 100);
+    const leadConv = businessType === 'lead' ? (tauxRdv / 100) * (tauxClosing / 100) : 1;
+
+    let bev = -1;
+    let cumBudget = 0;
+    let cumCA = 0;
+    const data = Array.from({ length: 12 }, (_, i) => {
+      const calMonth = (startMonth + i) % 12;
+      const label = seasonalityEnabled ? MONTH_NAMES[calMonth] : `M${i + 1}`;
+      const seasonal = seasonalityEnabled && highSeasonMonths[calMonth] ? highSeasonMultiplier : 1;
+
+      // Sum across all keywords using their actual position at month i
+      let traffic = 0, leads = 0, ca = 0;
+      kwResults.forEach(kw => {
+        const pm   = kw.monthlyPos[i];
+        const ctrM = (CTR_TABLE[pm] ?? 0) * (budgetRatio / 100);
+        const t    = getEffectiveVolume(kw, chalandisePercent) * ctrM * kw.coeff * seasonal;
+        const l    = t * (cr[kw.intention as Intention] / 100);
+        traffic += t;
+        leads   += l;
+        ca      += l * basketValue * leadConv;
+      });
+
+      // kwMultiplier scales "mots clés avec budget activé" → equivalent to scaling all
+      // since keywords without budget contribute 0 (pos 11, CTR 0)
+      traffic *= kwMultiplier;
+      leads   *= kwMultiplier;
+      ca      *= kwMultiplier;
+
+      cumBudget += monthlyBudget;
+      cumCA     += ca;
+
+      if (bev === -1) {
+        const reached = breakEvenMode === 'cumule' ? cumCA >= cumBudget : ca >= monthlyBudget;
+        if (reached) bev = i + 1;
+      }
+      const cplMonth = leads > 0.5 ? Math.round(monthlyBudget / leads) : null;
+      return {
+        month: label,
+        budget: Math.round(monthlyBudget),
+        ca: Math.round(ca),
+        budgetCumule: Math.round(cumBudget),
+        caCumule: Math.round(cumCA),
+        leads: Math.round(leads),
+        traffic: Math.round(traffic),
+        cplMonth,
+        isBev: false,
+      };
+    });
+    if (bev > 0) data[bev - 1].isBev = true;
     const bevLabel = bev > 0
       ? (seasonalityEnabled ? MONTH_NAMES[(startMonth + bev - 1) % 12] : `M${bev}`)
       : null;
     return { monthlyData: data, breakEvenMonth: bevLabel };
-  }, [totals, basketValue, seasonalityEnabled, startMonth, highSeasonMonths, highSeasonMultiplier]);
+  }, [kwResults, categories, budgetRatio, businessType, tauxRdv, tauxClosing, basketValue, kwMultiplier, seasonalityEnabled, startMonth, highSeasonMonths, highSeasonMultiplier, crTransactionnel, crPreAchat, crIntermediaire, crInformationnel, breakEvenMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Totals */
+  const totals = useMemo(() => {
+    // M+12 monthly rate per keyword (for table footer & funnel)
+    const rawLeads_m12   = kwResults.reduce((s, k) => s + k.leads, 0);
+    const rawCA_m12      = kwResults.reduce((s, k) => s + k.ca, 0);
+    const totalLeads     = rawLeads_m12 * kwMultiplier;
+    const totalCA_m12    = rawCA_m12    * kwMultiplier; // monthly rate at full maturity
+    const totalTraffic   = kwResults.reduce((s, k) => s + k.traffic, 0) * kwMultiplier;
+
+    // Annual sums from actual monthly projection (integrates gradual budget activation)
+    const totalCA_annual   = monthlyData.reduce((s, m) => s + m.ca,      0);
+    const totalLeads_annual = monthlyData.reduce((s, m) => s + m.leads,   0);
+
+    // CA exposed to visitors = what they see in the table (M+12 monthly rate)
+    const totalCA = totalCA_m12;
+
+    const totalImpressions = keywords.reduce((s, k) => s + getEffectiveVolume(k, chalandisePercent), 0) * kwMultiplier;
+    const topics    = new Set(keywords.map(k => k.topic).filter(Boolean));
+    const nbPages   = (topics.size || keywords.length) * kwMultiplier;
+    const nbKeywords = keywords.length * kwMultiplier;
+    const budgetMensuel = categories.reduce((s, c) => s + (c.budget ?? 700), 0) * (budgetRatio / 100);
+    const budgetTotal   = budgetMensuel * 12;
+
+    // ROI year 1 = annual sum of graduated months; year 2 = year1 + full maturity × 12
+    const totalCA_2ans  = totalCA_annual + 12 * totalCA_m12;
+    const roi1an     = budgetTotal > 0 ? ((totalCA_annual - budgetTotal) / budgetTotal) * 100 : 0;
+    const roiMult1an = budgetTotal > 0 ? totalCA_annual / budgetTotal : 0;
+    const roi2ans    = budgetTotal > 0 ? ((totalCA_2ans  - budgetTotal) / budgetTotal) * 100 : 0;
+    const roiMult    = budgetTotal > 0 ? totalCA_2ans  / budgetTotal : 0;
+
+    // Funnel (unscaled M+12 monthly rate)
+    const baseLeads   = rawLeads_m12;
+    const baseRdv     = baseLeads * (tauxRdv / 100);
+    const baseClosing = baseRdv   * (tauxClosing / 100);
+
+    return {
+      totalCA, totalLeads, totalTraffic, totalImpressions, nbPages, nbKeywords,
+      budgetMensuel, budgetTotal, roi1an, roiMult1an, roi2ans, roiMult,
+      baseLeads, baseRdv, baseClosing,
+      totalCA_annual, totalLeads_annual, totalCA_m12,
+    };
+  }, [kwResults, monthlyData, keywords, categories, budgetRatio, kwMultiplier, businessType, tauxRdv, tauxClosing, basketValue]);
+
+  const hasCatCoeffApplied = useMemo(() => categories.some(c => (c.coeff ?? 1) > 1), [categories]);
 
   /* CPL */
   const cpl = useMemo(() => {
-    const { totalLeads: tl, budgetTotal: bt } = totals;
-    const safe = tl > 0.001 ? tl : 0.001;
+    const { totalLeads_annual: tl, budgetTotal: bt } = totals;
+    const safe = (tl ?? 0) > 0.001 ? (tl ?? 0) : 0.001;
     return {
-      an1: bt / (safe * 6.5),
-      an2: bt / (safe * 18.5),
-      an3: bt / (safe * 30.5),
-      an5: bt / (safe * 54.5),
+      an1: bt / safe,
+      an2: bt / (safe + 12 * (totals.totalLeads)),
+      an3: bt / (safe + 24 * (totals.totalLeads)),
+      an5: bt / (safe + 48 * (totals.totalLeads)),
     };
   }, [totals]);
 
@@ -548,7 +863,7 @@ export default function SimulateurSEO() {
   const addKw = (catId: string) => {
     setState(s => ({
       ...s,
-      keywords: [...s.keywords, { id: uid(), keyword: '', volume: 1000, difficulty: 30, proximity: 1, intention: 1, topic: '', categoryId: catId }],
+      keywords: [...s.keywords, { id: uid(), keyword: '', volume: 1000, difficulty: 30, proximity: 1, intention: 1, topic: '', categoryId: catId, zone: 'chalandise' }],
     }));
     setOpenCats(prev => { const n = new Set(prev); n.add(catId); return n; });
   };
@@ -558,7 +873,7 @@ export default function SimulateurSEO() {
   /* ── EXCEL IMPORT ─────────────────────────────────────────── */
   const INTENT_MAP: Record<string, Intention> = {
     transactionnel: 1, transactional: 1, achat: 1, '1': 1,
-    'pré-achat': 2, 'pre-achat': 2, preachat: 2, consideration: 2, '2': 2,
+    'pré-achat': 2, 'pre-achat': 2, preachat: 2, consideration: 2, navigationnelle: 2, navigationnel: 2, '2': 2,
     intermédiaire: 3, intermediaire: 3, commerciale: 3, commercial: 3, '3': 3,
     informationnel: 4, informational: 4, information: 4, info: 4, '4': 4,
   };
@@ -655,13 +970,14 @@ export default function SimulateurSEO() {
           intention:  (INTENT_MAP[intentRaw] ?? 1) as Intention,
           topic:      String(col(row, 'sujet', 'topic', 'theme', 'thème', 'cluster', 'page') ?? '').trim(),
           categoryId: catNameToId[catLabel],
+          zone:       'chalandise' as Zone,
         };
       }).filter(k => k.keyword);
 
       if (!newKws.length) return;
       const newCats: Category[] = Object.entries(catNameToId).map(([name, id]) => {
         const nbInCat = newKws.filter(k => k.categoryId === id).length;
-        return { id, name, budget: Math.max(700, nbInCat * 700) };
+        return { id, name, budget: nbInCat * 700 };
       });
       const newCatIds = new Set(newCats.map(c => c.id));
       setState(s => ({
@@ -718,6 +1034,8 @@ export default function SimulateurSEO() {
 
   const [saveError, setSaveError] = useState('');
   const [funnelPeriod, setFunnelPeriod] = useState<'month' | 'year'>('month');
+  const [selectedCatIds, setSelectedCatIds] = useState<Set<string>>(new Set());
+  const [bulkBudget, setBulkBudget] = useState<string>('');
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string>('');
   const [creatingNewSpace, setCreatingNewSpace] = useState(false);
@@ -756,6 +1074,7 @@ export default function SimulateurSEO() {
         navigator.clipboard.writeText(`${location.origin}${location.pathname}?report=${id}`);
       }
       setSaveState('saved');
+      setIsDirty(false);
       setTimeout(() => setSaveState('idle'), 3000);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -837,7 +1156,7 @@ export default function SimulateurSEO() {
     pdf.save(`simulation-seo-${(prospectName || 'prospect').toLowerCase().replace(/\s+/g, '-')}.pdf`);
   };
 
-  const coeffSante = (healthScore / 80).toFixed(2);
+  const coeffSante = computeHealthCoeff(healthScore).toFixed(2);
 
   /* ── RENDER ─────────────────────────────────────────────────── */
   return (
@@ -1049,6 +1368,13 @@ export default function SimulateurSEO() {
           {(session?.user?.isGlobalAdmin || workspaces.some(w => w.role === 'owner')) && (
             <a
               href="/admin/rapports"
+              onClick={e => {
+                if (isDirty && !window.confirm(
+                  'Vous avez des modifications non enregistrées. Si vous quittez maintenant, elles seront perdues. Continuer sans enregistrer ?'
+                )) {
+                  e.preventDefault();
+                }
+              }}
               style={{
                 backgroundColor: 'transparent', border: `1px solid ${G3}`,
                 borderRadius: 6, padding: '7px 14px', color: G2,
@@ -1113,7 +1439,7 @@ export default function SimulateurSEO() {
               onChange={v => update({ healthScore: v })} />
             <div>
               <div style={{ color: L_MED, fontSize: 12, marginBottom: 6 }}>
-                Panier moyen / Valeur d'un lead
+                {businessType === 'ecommerce' ? 'Panier moyen' : 'Valeur d\'un lead'}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <NumInput
@@ -1171,7 +1497,7 @@ export default function SimulateurSEO() {
                           onChange={target => {
                             const diff = target - catKws.length;
                             if (diff > 0) {
-                              const newKws = Array.from({ length: diff }, () => ({ id: uid(), keyword: '', volume: 1000, difficulty: 30, proximity: 1 as Proximity, intention: 1 as Intention, topic: '', categoryId: cat.id }));
+                              const newKws = Array.from({ length: diff }, () => ({ id: uid(), keyword: '', volume: 1000, difficulty: 30, proximity: 1 as Proximity, intention: 1 as Intention, topic: '', categoryId: cat.id, zone: 'chalandise' as Zone }));
                               setState(s => ({ ...s, keywords: [...s.keywords, ...newKws] }));
                             } else if (diff < 0) {
                               const toRemove = new Set(catKws.slice(diff).map(k => k.id));
@@ -1209,7 +1535,7 @@ export default function SimulateurSEO() {
                     <div style={{ overflowX: 'auto', padding: '4px 10px 8px' }}>
                       {catKws.length === 0 ? (
                         <div style={{ color: L_MED, fontSize: 11, padding: '8px 0', textAlign: 'center' }}>
-                          Aucun mot-clé — cliquez sur "+ Ajouter" ou{' '}
+                          Aucun mot-clé : cliquez sur "+ Ajouter" ou{' '}
                           <button
                             onClick={() => addKw(cat.id)}
                             style={{ background: 'none', border: 'none', color: ORANGE, cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: 0, textDecoration: 'underline' }}
@@ -1224,6 +1550,7 @@ export default function SimulateurSEO() {
                               <th style={{ padding: '3px 2px 5px', textAlign: 'center', minWidth: 36 }}>Diff.</th>
                               <th style={{ padding: '3px 2px 5px', textAlign: 'center', minWidth: 88 }}>Proximité</th>
                               <th style={{ padding: '3px 2px 5px', textAlign: 'center', minWidth: 100 }}>Intention</th>
+                              <th style={{ padding: '3px 2px 5px', textAlign: 'center', minWidth: 96 }}>Zone</th>
                               <th style={{ padding: '3px 0 5px 2px', textAlign: 'left', minWidth: 66 }}>Sujet</th>
                               <th style={{ width: 18 }} />
                             </tr>
@@ -1257,9 +1584,16 @@ export default function SimulateurSEO() {
                                   <select value={kw.intention} onChange={e => updateKw(kw.id, 'intention', Number(e.target.value) as Intention)}
                                     style={{ width: 100, backgroundColor: L_INPUT, border: `1px solid ${L_BORD}`, borderRadius: 3, color: L_DARK, fontSize: 11, padding: '2px 4px', outline: 'none', cursor: 'pointer' }}>
                                     <option value={1}>Transactionnel</option>
-                                    <option value={2}>Pré-achat</option>
+                                    <option value={2}>Navigationnelle</option>
                                     <option value={3}>Commerciale</option>
                                     <option value={4}>Informationnel</option>
+                                  </select>
+                                </td>
+                                <td style={{ padding: '4px 2px' }}>
+                                  <select value={kw.zone} onChange={e => updateKw(kw.id, 'zone', e.target.value as Zone)}
+                                    style={{ width: 96, backgroundColor: L_INPUT, border: `1px solid ${L_BORD}`, borderRadius: 3, color: L_DARK, fontSize: 11, padding: '2px 4px', outline: 'none', cursor: 'pointer' }}>
+                                    <option value="chalandise">Zone de chalandise</option>
+                                    <option value="france">France</option>
                                   </select>
                                 </td>
                                 <td style={{ padding: '4px 2px 4px 4px' }}>
@@ -1287,7 +1621,7 @@ export default function SimulateurSEO() {
               <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Taux de conversion par intention
             </div>
             <Slider light label="Transactionnel" value={crTransactionnel} min={0} max={30} step={0.5} unit="%" onChange={v => update({ crTransactionnel: v })} />
-            <Slider light label="Pré-achat" value={crPreAchat} min={0} max={20} step={0.5} unit="%" onChange={v => update({ crPreAchat: v })} />
+            <Slider light label="Navigationnelle" value={crPreAchat} min={0} max={20} step={0.5} unit="%" onChange={v => update({ crPreAchat: v })} />
             <Slider light label="Commerciale" value={crIntermediaire} min={0} max={10} step={0.1} unit="%" onChange={v => update({ crIntermediaire: v })} />
             <Slider light label="Informationnel" value={crInformationnel} min={0} max={5} step={0.1} unit="%" onChange={v => update({ crInformationnel: v })} />
             {businessType === 'lead' && (
@@ -1301,8 +1635,15 @@ export default function SimulateurSEO() {
 
           {/* BUDGET */}
           <div style={cardLight}>
-            <div style={secTitleLight}>
+            <div style={{ ...secTitleLight, marginBottom: 10 }}>
               <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Accompagnement SEO/GEO
+              <button
+                onClick={() => update({ budgetCatsHidden: !state.budgetCatsHidden })}
+                title={state.budgetCatsHidden ? 'Afficher les thématiques' : 'Masquer les thématiques'}
+                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: L_MED, fontSize: 11, padding: '2px 4px' }}
+              >
+                {state.budgetCatsHidden ? '▶ détail' : '▲ masquer'}
+              </button>
             </div>
             {categories.length === 0 ? (
               <div style={{ color: L_SOFT, fontSize: 12, textAlign: 'center', padding: '8px 0' }}>
@@ -1310,26 +1651,115 @@ export default function SimulateurSEO() {
               </div>
             ) : (
               <>
+                {/* Barre de sélection / application en masse */}
+                {!budgetCatsHidden && (<>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <input
+                    type="checkbox"
+                    id="select-all-cats"
+                    checked={selectedCatIds.size === categories.length && categories.length > 0}
+                    ref={el => { if (el) el.indeterminate = selectedCatIds.size > 0 && selectedCatIds.size < categories.length; }}
+                    onChange={e => {
+                      if (e.target.checked) {
+                        setSelectedCatIds(new Set(categories.map(c => c.id)));
+                        const avg = Math.round(categories.reduce((s, c) => s + (c.budget ?? 700), 0) / categories.length / 100) * 100;
+                        setBulkBudget(String(avg));
+                      } else {
+                        setSelectedCatIds(new Set());
+                        setBulkBudget('');
+                      }
+                    }}
+                    style={{ cursor: 'pointer', accentColor: ORANGE }}
+                  />
+                  <label htmlFor="select-all-cats" style={{ fontSize: 11, color: L_MED, cursor: 'pointer', userSelect: 'none' }}>
+                    {selectedCatIds.size === 0 ? 'Tout sélectionner' : `${selectedCatIds.size} sélectionné${selectedCatIds.size > 1 ? 's' : ''}`}
+                  </label>
+                  {selectedCatIds.size > 0 && (
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, marginLeft: 8 }}>
+                      <input
+                        type="range"
+                        min={0} max={5000} step={100}
+                        value={bulkBudget === '' ? 0 : Number(bulkBudget)}
+                        onChange={e => {
+                          const v = Number(e.target.value);
+                          setBulkBudget(String(v));
+                          selectedCatIds.forEach(id => updateCategoryBudget(id, v));
+                        }}
+                        style={{ flex: 1, accentColor: ORANGE, cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: 12, color: ORANGE, fontWeight: 700, minWidth: 48, textAlign: 'right' }}>
+                        {bulkBudget === '' ? '–' : `${Number(bulkBudget).toLocaleString('fr-FR')} €`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
                 {categories.map(cat => {
                   const nb  = keywords.filter(k => k.categoryId === cat.id).length;
                   const bpk = nb > 0 ? (cat.budget ?? 700) / nb : (cat.budget ?? 700);
                   const coeff = (bpk / 500) ** 2;
+                  const isSelected = selectedCatIds.has(cat.id);
                   return (
-                    <div key={cat.id}>
-                      <Slider
-                        light
-                        label={cat.name}
-                        value={cat.budget ?? 700}
-                        min={300} max={5000} step={100} unit="€"
-                        hint={`${nb} kw → ${fmtC(Math.round(bpk))}/kw · coeff ×${coeff.toFixed(2)} ${coeff >= 1 ? '↑' : '↓'}`}
-                        onChange={v => updateCategoryBudget(cat.id, v)}
+                    <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={e => {
+                          setSelectedCatIds(prev => {
+                            const next = new Set(prev);
+                            if (e.target.checked) {
+                              next.add(cat.id);
+                              if (prev.size === 0) setBulkBudget(String(cat.budget ?? 700));
+                            } else {
+                              next.delete(cat.id);
+                              if (next.size === 0) setBulkBudget('');
+                            }
+                            return next;
+                          });
+                        }}
+                        style={{ cursor: 'pointer', accentColor: ORANGE, flexShrink: 0 }}
                       />
+                      <div style={{ flex: 1 }}>
+                        <Slider
+                          light
+                          label={cat.name}
+                          value={cat.budget ?? 700}
+                          min={0} max={5000} step={100} unit="€"
+                          hint={`${nb} kw → ${fmtC(Math.round(bpk))}/kw · coeff ×${coeff.toFixed(2)} ${coeff >= 1 ? '↑' : '↓'}`}
+                          onChange={v => updateCategoryBudget(cat.id, v)}
+                        />
+                      </div>
                     </div>
                   );
                 })}
-                <div style={{ borderTop: `1px solid ${L_BORD}`, marginTop: 4, paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ color: L_MED, fontSize: 12 }}>Total mensuel</span>
-                  <span style={{ color: ORANGE, fontWeight: 700, fontSize: 15 }}>{fmtC(totals.budgetMensuel)}<span style={{ fontSize: 11, fontWeight: 400 }}> /mois</span></span>
+                </>)}
+                <div style={{ borderTop: budgetCatsHidden ? 'none' : `1px solid ${L_BORD}`, marginTop: budgetCatsHidden ? 0 : 4, paddingTop: budgetCatsHidden ? 0 : 8 }}>
+                  <Slider
+                    light
+                    label="Total mensuel"
+                    value={Math.round(categories.reduce((s, c) => s + (c.budget ?? 700), 0) * (budgetRatio / 100))}
+                    min={0}
+                    max={20000}
+                    step={100}
+                    unit="€"
+                    hint="Répartition proportionnelle entre les thématiques"
+                    bold
+                    onChange={rawTargetTotal => {
+                      if (categories.length === 0) return;
+                      const targetTotal = Math.min(rawTargetTotal, 20000);
+                      const rawSum = categories.reduce((s, c) => s + (c.budget ?? 700), 0);
+                      const targetRawSum = budgetRatio > 0 ? targetTotal / (budgetRatio / 100) : 0;
+                      if (rawSum === 0) {
+                        const equal = Math.round(targetRawSum / categories.length / 100) * 100;
+                        setState(s => ({ ...s, categories: s.categories.map(c => ({ ...c, budget: equal })) }));
+                      } else {
+                        setState(s => ({ ...s, categories: s.categories.map(c => ({
+                          ...c,
+                          budget: Math.round((c.budget ?? 700) / rawSum * targetRawSum / 100) * 100,
+                        })) }));
+                      }
+                    }}
+                  />
                 </div>
               </>
             )}
@@ -1441,6 +1871,21 @@ export default function SimulateurSEO() {
             )}
           </div>
 
+          {/* GESTION ZONE DE CHALANDISE */}
+          <div style={cardLight}>
+            <div style={secTitleLight}>
+              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Gestion zone de chalandise
+            </div>
+            <Slider light
+              label="Population française concernée"
+              value={chalandisePercent}
+              min={0} max={100} step={0.5}
+              unit="%"
+              hint="Mots-clés 'France' : volume corrigé = volume × ce %. Mots-clés 'Zone de chalandise' : volume conservé à 100%."
+              onChange={v => update({ chalandisePercent: v })}
+            />
+          </div>
+
         </div>
 
         {/* ── RIGHT PANEL ── */}
@@ -1477,13 +1922,13 @@ export default function SimulateurSEO() {
               border: `2px solid ${ORANGE}`,
             }}>
               <div style={{ color: '#7a9e8e', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-                CA Potentiel / An
+                CA Prévisionnel / An
               </div>
               <div style={{ color: ORANGE, fontSize: 40, fontWeight: 800, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-                {fmtC(totals.totalCA * 12)}
+                {fmtC(totals.totalCA_annual)}
               </div>
               <div style={{ color: '#5a7a6a', fontSize: 12, marginTop: 8 }}>
-                à partir de 12 mois de prestation
+                somme des 12 mois de montée en puissance
               </div>
             </div>
 
@@ -1522,7 +1967,7 @@ export default function SimulateurSEO() {
           {/* BLOC 2 — SECONDARY KPIs */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
             <KPICard label="Trafic organique / mois" value={fmtN(totals.totalTraffic)} />
-            <KPICard label="Leads / mois (à 12 mois)" value={fmtLeads(totals.totalLeads)} />
+            <KPICard label={businessType === 'ecommerce' ? 'CPA' : 'Leads / mois (à 12 mois)'} value={businessType === 'ecommerce' && totals.budgetMensuel > 0 && totals.totalLeads > 0 ? fmtC(Math.round(totals.budgetMensuel / totals.totalLeads)) : fmtLeads(totals.totalLeads)} />
             <KPICard label="Sujets clés à traiter" value={`${totals.nbPages}`} />
             <KPICard label="Budget mensuel" value={fmtC(totals.budgetMensuel)} accent />
           </div>
@@ -1570,8 +2015,8 @@ export default function SimulateurSEO() {
                       { label: caLabel,          value: fmtC(totalCA * mult),           active: true },
                     ]}
                     rates={[
-                      imp   > 0 ? `↓ ${fmtP(traf / imp * 100)}`         : '—',
-                      traf  > 0 ? `↓ ${fmtP(baseLeads / traf * 100)}`   : '—',
+                      imp   > 0 ? `↓ ${fmtP(traf / imp * 100)}`         : '-',
+                      traf  > 0 ? `↓ ${fmtP(baseLeads / traf * 100)}`   : '-',
                       `↓ ${tauxRdv}%`,
                       `↓ ${tauxClosing}%`,
                       `× ${basketValue}€`,
@@ -1588,8 +2033,8 @@ export default function SimulateurSEO() {
                     { label: caLabel,        value: fmtC(totalCA * mult),        active: true },
                   ]}
                   rates={[
-                    imp  > 0 ? `↓ ${fmtP(traf / imp * 100)}`        : '—',
-                    traf > 0 ? `↓ ${fmtP(baseLeads / traf * 100)}`  : '—',
+                    imp  > 0 ? `↓ ${fmtP(traf / imp * 100)}`        : '-',
+                    traf > 0 ? `↓ ${fmtP(baseLeads / traf * 100)}`  : '-',
                     `× ${basketValue}€`,
                   ]}
                 />
@@ -1598,9 +2043,9 @@ export default function SimulateurSEO() {
             {/* CPL summary */}
             <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
               {([
-                { label: 'CPL an 1', value: cpl.an1 },
-                { label: 'CPL an 2', value: cpl.an2 },
-                { label: 'CPL an 3', value: cpl.an3 },
+                { label: `${businessType === 'ecommerce' ? 'CPA' : 'CPL'} an 1`, value: cpl.an1 },
+                { label: `${businessType === 'ecommerce' ? 'CPA' : 'CPL'} an 2`, value: cpl.an2 },
+                { label: `${businessType === 'ecommerce' ? 'CPA' : 'CPL'} an 3`, value: cpl.an3 },
               ] as { label: string; value: number }[]).map(({ label, value }) => (
                 <div key={label} style={{ flex: 1, minWidth: 80, background: G5, borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
                   <div style={{ color: '#5a7a6a', fontSize: 10, marginBottom: 2 }}>{label}</div>
@@ -1613,15 +2058,37 @@ export default function SimulateurSEO() {
           {/* BLOC 4 — MONTHLY PROJECTION */}
           <div style={card}>
             <div style={{ ...secTitle, marginBottom: 16 }}>
-              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Projection mensuelle — 12 mois
+              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Projection mensuelle : 12 mois
               {seasonalityEnabled && (
                 <span style={{ background: '#3b82f622', border: '1px solid #3b82f644', borderRadius: 4, padding: '2px 8px', fontSize: 10, color: '#3b82f6', fontWeight: 400 }}>
                   Saisonnalité active
                 </span>
               )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+                <span style={{ color: '#7a9e8e', fontSize: 11 }}>Mensuel</span>
+                <button
+                  onClick={() => update({ breakEvenMode: breakEvenMode === 'cumule' ? 'mensuel' : 'cumule' })}
+                  style={{
+                    backgroundColor: breakEvenMode === 'cumule' ? ORANGE : G3,
+                    border: 'none', borderRadius: 12,
+                    width: 36, height: 20, cursor: 'pointer',
+                    position: 'relative', transition: 'background .2s', flexShrink: 0,
+                  }}
+                  title="Basculer le calcul de break-even entre comparaison mensuelle et cumulée"
+                >
+                  <span style={{
+                    position: 'absolute', top: 2,
+                    left: breakEvenMode === 'cumule' ? 18 : 2,
+                    width: 16, height: 16,
+                    backgroundColor: 'white', borderRadius: '50%',
+                    transition: 'left .2s', display: 'block',
+                  }} />
+                </button>
+                <span style={{ color: '#7a9e8e', fontSize: 11 }}>Cumulé</span>
+              </div>
               {breakEvenMonth && (
-                <span style={{ marginLeft: 'auto', color: ORANGE, fontSize: 12, fontWeight: 400, background: `${ORANGE}22`, borderRadius: 4, padding: '2px 8px' }}>
-                  Break-even : {breakEvenMonth}
+                <span style={{ color: ORANGE, fontSize: 12, fontWeight: 400, background: `${ORANGE}22`, borderRadius: 4, padding: '2px 8px' }}>
+                  Break-even ({breakEvenMode === 'cumule' ? 'cumulé' : 'mensuel'}) : {breakEvenMonth}
                 </span>
               )}
             </div>
@@ -1636,11 +2103,17 @@ export default function SimulateurSEO() {
                   tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k€` : `${v}€`}
                 />
                 <Tooltip content={<ChartTooltip />} />
-                <Legend
-                  formatter={v => <span style={{ color: '#a8c5b5', fontSize: 11 }}>{v === 'budget' ? 'Budget mensuel' : 'CA mensuel'}</span>}
-                />
-                <Bar dataKey="budget" fill={G4} name="budget" radius={[3, 3, 0, 0]} maxBarSize={32} />
-                <Line dataKey="ca" stroke={ORANGE} strokeWidth={2.5} dot={false} name="ca" />
+                {breakEvenMode === 'cumule' ? (
+                  <>
+                    <Bar dataKey="budgetCumule" fill={G4} name="budgetCumule" radius={[3, 3, 0, 0]} maxBarSize={32} />
+                    <Line dataKey="caCumule" stroke={ORANGE} strokeWidth={2.5} dot={false} name="caCumule" />
+                  </>
+                ) : (
+                  <>
+                    <Bar dataKey="budget" fill={G4} name="budget" radius={[3, 3, 0, 0]} maxBarSize={32} />
+                    <Line dataKey="ca" stroke={ORANGE} strokeWidth={2.5} dot={false} name="ca" />
+                  </>
+                )}
                 {breakEvenMonth && (
                   <ReferenceLine
                     x={breakEvenMonth}
@@ -1652,12 +2125,16 @@ export default function SimulateurSEO() {
                 )}
               </ComposedChart>
             </ResponsiveContainer>
+            <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 10, color: '#5a7a6a' }}>
+              <span><span style={{ display: 'inline-block', width: 10, height: 10, backgroundColor: G4, borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }} />{breakEvenMode === 'cumule' ? 'Budget cumulé' : 'Budget mensuel'}</span>
+              <span><span style={{ display: 'inline-block', width: 10, height: 2, backgroundColor: ORANGE, marginRight: 4, verticalAlign: 'middle' }} />{breakEvenMode === 'cumule' ? 'CA cumulé' : 'CA mensuel'}</span>
+            </div>
           </div>
 
           {/* BLOC 4b — LEADS PAR MOIS */}
-          <div style={{ marginBottom: 14 }}>
+          <div style={card}>
             <div style={{ ...secTitle, marginBottom: 10 }}>
-              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Leads captés par mois — 12 mois
+              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Évolution du CPA (coût d'acquisition) : 12 mois
             </div>
             <ResponsiveContainer width="100%" height={220}>
               <ComposedChart data={monthlyData} margin={{ top: 8, right: 48, left: 0, bottom: 4 }}>
@@ -1672,26 +2149,30 @@ export default function SimulateurSEO() {
                     <div style={{ background: G2, border: `1px solid ${G3}`, borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
                       <div style={{ color: CREAM, fontWeight: 700, marginBottom: 4 }}>{label}</div>
                       {payload.map((p, idx) => p.dataKey === 'leads'
-                        ? <div key={idx} style={{ color: ORANGE }}>{p.value} lead{Number(p.value) > 1 ? 's' : ''}</div>
-                        : p.value != null ? <div key={idx} style={{ color: '#a8c5b5' }}>CPL : {p.value} €</div> : null
+                        ? <div key={idx} style={{ color: ORANGE }}>{p.value} {businessType === 'ecommerce' ? `vente${Number(p.value) > 1 ? 's' : ''}` : `lead${Number(p.value) > 1 ? 's' : ''}`}</div>
+                        : p.value != null ? <div key={idx} style={{ color: '#a8c5b5' }}>{businessType === 'ecommerce' ? 'CPA' : 'CPL'} : {p.value} €</div> : null
                       )}
                     </div>
                   ) : null}
                 />
-                <Bar yAxisId="leads" dataKey="leads" fill={ORANGE} radius={[4, 4, 0, 0]} maxBarSize={36} name="Leads" />
-                <Line yAxisId="cpl" dataKey="cplMonth" stroke="#a8c5b5" strokeWidth={2} dot={false} name="CPL" connectNulls={false} />
+                <Bar yAxisId="leads" dataKey="leads" fill={ORANGE} radius={[4, 4, 0, 0]} maxBarSize={36} name={businessType === 'ecommerce' ? 'Ventes' : 'Leads'} />
+                <Line yAxisId="cpl" dataKey="cplMonth" stroke="#a8c5b5" strokeWidth={2} dot={false} name={businessType === 'ecommerce' ? 'CPA' : 'CPL'} connectNulls={false} />
                 {breakEvenMonth && (
                   <ReferenceLine yAxisId="leads" x={breakEvenMonth} stroke={ORANGE} strokeDasharray="4 4" strokeWidth={1.5}
                     label={{ value: 'Break-even', fill: ORANGE, fontSize: 10, position: 'insideTopRight' }} />
                 )}
               </ComposedChart>
             </ResponsiveContainer>
+            <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 10, color: '#5a7a6a' }}>
+              <span><span style={{ display: 'inline-block', width: 10, height: 10, backgroundColor: ORANGE, borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }} />{businessType === 'ecommerce' ? 'Ventes' : 'Leads'}</span>
+              <span><span style={{ display: 'inline-block', width: 10, height: 2, backgroundColor: '#a8c5b5', marginRight: 4, verticalAlign: 'middle' }} />{businessType === 'ecommerce' ? 'CPA' : 'CPL'}</span>
+            </div>
           </div>
 
           {/* BLOC 4c — MONTÉE EN PUISSANCE */}
-          <div style={{ marginBottom: 14 }}>
+          <div style={card}>
             <div style={{ ...secTitle, marginBottom: 4 }}>
-              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Montée en puissance SEO/GEO — 1ère année
+              <span style={{ color: ORANGE, fontSize: 10 }}>◆</span> Montée en puissance SEO/GEO : 1ère année
             </div>
             <div style={{ color: '#5a7a6a', fontSize: 11, marginBottom: 12 }}>
               Les premiers résultats apparaissent à partir du 4ème mois (indexation + premières positions), avec une accélération à 6 mois.
@@ -1718,10 +2199,6 @@ export default function SimulateurSEO() {
                     />
                   ))}
                 </Bar>
-                <ReferenceLine x="M4" stroke={ORANGE} strokeDasharray="4 4" strokeWidth={1.5}
-                  label={{ value: 'Premiers résultats', fill: ORANGE, fontSize: 9, position: 'insideTopRight' }} />
-                <ReferenceLine x="M6" stroke="#3b82f6" strokeDasharray="4 4" strokeWidth={1.5}
-                  label={{ value: 'Accélération', fill: '#3b82f6', fontSize: 9, position: 'insideTopRight' }} />
               </BarChart>
             </ResponsiveContainer>
             <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 10, color: '#5a7a6a' }}>
@@ -1740,67 +2217,174 @@ export default function SimulateurSEO() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${G3}` }}>
+                    <th style={{ padding: '6px 4px', width: 24 }}></th>
                     {[
                       { label: 'Mot clé / Sujet', align: 'left'   },
                       { label: 'Volume',           align: 'right'  },
                       { label: 'Diff.',            align: 'center' },
-                      { label: 'Position',         align: 'center' },
+                      { label: 'Position M+12',    align: 'center' },
                       { label: 'CTR',              align: 'center' },
-                      { label: 'Trafic / mois',    align: 'right'  },
-                      { label: 'Leads / mois',     align: 'right'  },
-                      { label: 'CA / mois',        align: 'right'  },
+                      { label: 'Trafic / mois',    align: 'right', starred: hasCatCoeffApplied },
+                      { label: businessType === 'ecommerce' ? 'Ventes / mois' : 'Leads / mois', align: 'right', starred: hasCatCoeffApplied },
+                      { label: 'CA / mois',        align: 'right', starred: hasCatCoeffApplied },
                       { label: 'Intention',        align: 'center' },
-                    ].map(({ label, align }) => (
+                      { label: 'Budget / an',      align: 'right'  },
+                      { label: '1er mois',         align: 'center' },
+                    ].map(({ label, align, starred }) => (
                       <th key={label} style={{
                         padding: '6px 8px',
                         textAlign: align as 'left' | 'right' | 'center',
                         color: '#5a7a6a', fontWeight: 600,
                         textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: 10,
-                      }}>{label}</th>
+                      }}>
+                        {label}{starred && <span style={{ color: ORANGE, marginLeft: 3 }}>★</span>}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {kwResults.map(kw => (
-                    <tr key={kw.id} style={{ borderBottom: `1px solid ${G3}` }}>
-                      <td style={{ padding: '8px 8px 8px 4px' }}>
-                        <div style={{ color: CREAM, fontWeight: 500 }}>{kw.keyword || <em style={{ color: '#5a7a6a' }}>—</em>}</div>
-                        {kw.topic && <div style={{ color: '#7a9e8e', fontSize: 10, marginTop: 2 }}>{kw.topic}</div>}
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: '#a8c5b5' }}>{fmtN(kw.volume)}</td>
-                      <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>{kw.difficulty}</td>
-                      <td style={{ padding: '8px', textAlign: 'center' }}>
-                        <span style={{
-                          backgroundColor: kw.pos <= 3 ? ORANGE : kw.pos <= 6 ? '#2d7a5e' : G3,
-                          borderRadius: 10, padding: '2px 9px',
-                          fontSize: 11, fontWeight: 700, color: 'white',
-                        }}>
-                          {kw.pos === 11 ? '11+' : `#${kw.pos}`}
-                        </span>
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>
-                        {fmtP(kw.ctr * 100)}
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: CREAM }}>{fmtN(kw.traffic)}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: CREAM }}>{kw.leads.toFixed(2)}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: ORANGE, fontWeight: 600 }}>{fmtC(kw.ca)}</td>
-                      <td style={{ padding: '8px', textAlign: 'center' }}>
-                        <span style={{
-                          backgroundColor: `${INTENT_COLOR[kw.intention]}22`,
-                          border: `1px solid ${INTENT_COLOR[kw.intention]}88`,
-                          borderRadius: 10, padding: '2px 8px',
-                          fontSize: 10, fontWeight: 600,
-                          color: INTENT_COLOR[kw.intention],
-                          whiteSpace: 'nowrap',
-                        }}>
-                          {INTENT_LABEL[kw.intention]}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {kwResults.map(kw => {
+                    const isExpanded = expandedKws.has(kw.id);
+                    const showBudgetTip = budgetTooltipKwId === kw.id;
+                    return (
+                      <>
+                        <tr key={kw.id} style={{ borderBottom: isExpanded ? 'none' : `1px solid ${G3}` }}>
+                          <td style={{ padding: '8px 4px', textAlign: 'center' }}>
+                            <button
+                              onClick={() => toggleKwExpand(kw.id)}
+                              style={{
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                color: '#5a7a6a', fontSize: 10, padding: '2px 4px',
+                                lineHeight: 1, borderRadius: 4,
+                              }}
+                              title={isExpanded ? 'Masquer la progression' : 'Voir la progression M+1 à M+12'}
+                            >
+                              {isExpanded ? '▲' : '▼'}
+                            </button>
+                          </td>
+                          <td style={{ padding: '8px 8px 8px 4px' }}>
+                            <div style={{ color: CREAM, fontWeight: 500 }}>{kw.keyword || <em style={{ color: '#5a7a6a' }}>-</em>}</div>
+                            {kw.topic && <div style={{ color: '#7a9e8e', fontSize: 10, marginTop: 2 }}>{kw.topic}</div>}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#a8c5b5' }}>{fmtN(kw.volume)}</td>
+                          <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>{kw.difficulty}</td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            <span style={{
+                              backgroundColor: kw.pos <= 3 ? ORANGE : kw.pos <= 6 ? '#2d7a5e' : G3,
+                              borderRadius: 10, padding: '2px 9px',
+                              fontSize: 11, fontWeight: 700, color: 'white',
+                            }}>
+                              {kw.pos === 11 ? '11+' : `#${kw.pos}`}
+                            </span>
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'center', color: '#a8c5b5' }}>
+                            {fmtP(kw.ctr * 100)}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: CREAM }}>{fmtN(kw.traffic)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: CREAM }}>{kw.leads.toFixed(2)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: ORANGE, fontWeight: 600 }}>{fmtC(kw.ca)}</td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            <span style={{
+                              backgroundColor: `${INTENT_COLOR[kw.intention]}22`,
+                              border: `1px solid ${INTENT_COLOR[kw.intention]}88`,
+                              borderRadius: 10, padding: '2px 8px',
+                              fontSize: 10, fontWeight: 600,
+                              color: INTENT_COLOR[kw.intention],
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {INTENT_LABEL[kw.intention]}
+                            </span>
+                          </td>
+                          {/* Budget alloué / an avec tooltip hover */}
+                          <td style={{ padding: '8px', textAlign: 'right', position: 'relative' }}>
+                            <span
+                              onMouseEnter={() => setBudgetTooltipKwId(kw.id)}
+                              onMouseLeave={() => setBudgetTooltipKwId(null)}
+                              style={{
+                                color: kw.allocatedBudget > 0 ? '#a8c5b5' : '#5a7a6a',
+                                cursor: 'default',
+                                borderBottom: '1px dashed #3a5a4a',
+                                paddingBottom: 1,
+                              }}
+                            >
+                              {kw.allocatedBudget > 0 ? fmtC(kw.allocatedBudget) : '-'}
+                            </span>
+                            {showBudgetTip && kw.allocatedBudget > 0 && (
+                              <div style={{
+                                position: 'absolute', right: 0, top: '100%', zIndex: 50,
+                                backgroundColor: '#0d1f18', border: `1px solid ${G3}`,
+                                borderRadius: 8, padding: '10px 12px', minWidth: 220,
+                                boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                              }}>
+                                <div style={{ fontSize: 9, color: '#5a7a6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                                  Budget alloué par mois
+                                </div>
+                                {kw.budgetPerMonth.map((b, i) => b > 0 && (
+                                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                    <span style={{ fontSize: 10, color: '#7a9e8e', minWidth: 36 }}>M+{i + 1}</span>
+                                    <div style={{ flex: 1, margin: '0 8px', backgroundColor: G3, borderRadius: 3, height: 4, overflow: 'hidden' }}>
+                                      <div style={{
+                                        height: '100%', borderRadius: 3,
+                                        backgroundColor: ORANGE,
+                                        width: `${Math.round((b / Math.max(...kw.budgetPerMonth)) * 100)}%`,
+                                      }} />
+                                    </div>
+                                    <span style={{ fontSize: 10, color: CREAM, fontWeight: 600, minWidth: 50, textAlign: 'right' }}>{fmtC(b)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          {/* 1er mois avec budget */}
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            {kw.firstMonth !== null ? (
+                              <span style={{
+                                backgroundColor: '#1a2e25', border: `1px solid ${G3}`,
+                                borderRadius: 8, padding: '2px 8px',
+                                fontSize: 10, fontWeight: 700, color: '#7a9e8e',
+                              }}>
+                                M+{kw.firstMonth}
+                              </span>
+                            ) : (
+                              <span style={{ color: '#3a5a4a', fontSize: 10 }}>-</span>
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr key={`${kw.id}-monthly`} style={{ borderBottom: `1px solid ${G3}`, backgroundColor: '#0d1f18' }}>
+                            <td colSpan={12} style={{ padding: '8px 12px 12px 36px' }}>
+                              <div style={{ fontSize: 9, color: '#5a7a6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                                Progression de position estimée
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {kw.monthlyPos.map((p, i) => (
+                                  <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                                    <span style={{ fontSize: 9, color: kw.budgetPerMonth[i] > 0 ? ORANGE : '#5a7a6a', fontWeight: 600 }}>M+{i + 1}</span>
+                                    <span style={{
+                                      backgroundColor: p <= 3 ? ORANGE : p <= 6 ? '#2d7a5e' : p <= 10 ? G3 : '#1a2e25',
+                                      borderRadius: 8, padding: '3px 7px',
+                                      fontSize: 11, fontWeight: 700, color: p === 11 ? '#5a7a6a' : 'white',
+                                      border: p === 11 ? `1px solid ${G3}` : 'none',
+                                      minWidth: 32, textAlign: 'center',
+                                    }}>
+                                      {p === 11 ? '11+' : `#${p}`}
+                                    </span>
+                                    {kw.budgetPerMonth[i] > 0 && (
+                                      <span style={{ fontSize: 8, color: ORANGE }}>{fmtC(kw.budgetPerMonth[i])}</span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr style={{ borderTop: `2px solid ${G3}` }}>
+                    <td></td>
                     <td style={{ padding: '10px 8px', color: CREAM, fontWeight: 700 }}>Total</td>
                     <td></td>
                     <td></td>
@@ -1810,10 +2394,17 @@ export default function SimulateurSEO() {
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: CREAM, fontWeight: 700 }}>{fmtLeads(totals.totalLeads)}</td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: ORANGE, fontWeight: 800, fontSize: 14 }}>{fmtC(totals.totalCA)}</td>
                     <td></td>
+                    <td style={{ padding: '10px 8px', textAlign: 'right', color: '#a8c5b5', fontWeight: 700 }}>{fmtC(kwResults.reduce((s, k) => s + k.allocatedBudget, 0))}</td>
+                    <td></td>
                   </tr>
                 </tfoot>
               </table>
             </div>
+            {hasCatCoeffApplied && (
+              <div style={{ marginTop: 8, fontSize: 10, color: '#5a7a6a' }}>
+                <span style={{ color: ORANGE }}>★</span> Ces chiffres prennent en compte l'extrapolation des mots clés associés
+              </div>
+            )}
           </div>
 
           {/* BLOC 7 — PARAMÈTRES (résumé pour le PDF) */}
@@ -1823,33 +2414,77 @@ export default function SimulateurSEO() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 28px' }}>
 
-              {/* Colonne gauche : données site + budget */}
+              {/* Colonne gauche : données site + budget + mots-clés + saisonnalité */}
               <div>
-                <div style={{ color: '#5a7a6a', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
-                  Données du site &amp; Budget
+
+                {/* Site & scores */}
+                <div style={{ color: '#5a7a6a', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                  Données du site
                 </div>
                 {([
-                  ['Domain Authority (DA)', `${da}`],
-                  ['Score Santé Semrush', `${healthScore} → coeff. ${coeffSante}`],
-                  ['Panier moyen / Lead', fmtC(basketValue)],
-                  ['Ratio budget alloué', `${budgetRatio}%`],
-                  ['Budget mensuel total', fmtC(totals.budgetMensuel)],
-                  ...categories.map(c => [`Budget ${c.name}`, fmtC(c.budget ?? 700)] as [string, string]),
-                  ['Nombre de pages', `${totals.nbPages}`],
+                  ['Autorité du domaine (DA)', `${da} / 100`],
+                  ['Score de vitalité Semrush', `${healthScore} / 100 → coeff. ${coeffSante}`],
+                  [businessType === 'ecommerce' ? 'Panier moyen' : 'Valeur d\'un lead', fmtC(basketValue)],
                 ] as [string, string][]).map(([label, value]) => (
-                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: `1px solid ${G3}` }}>
-                    <span style={{ color: '#7a9e8e', fontSize: 12 }}>{label}</span>
-                    <span style={{ color: CREAM, fontSize: 12, fontWeight: 600 }}>{value}</span>
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: `1px solid ${G3}` }}>
+                    <span style={{ color: '#7a9e8e', fontSize: 11 }}>{label}</span>
+                    <span style={{ color: CREAM, fontSize: 11, fontWeight: 600 }}>{value}</span>
                   </div>
                 ))}
+
+                {/* Budget par thématique */}
+                <div style={{ color: '#5a7a6a', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 12, marginBottom: 6 }}>
+                  Budget mensuel ({budgetRatio}% alloué)
+                </div>
+                {categories.map(cat => (
+                  <div key={cat.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: `1px solid ${G3}` }}>
+                    <span style={{ color: '#7a9e8e', fontSize: 11 }}>{cat.name}</span>
+                    <span style={{ color: CREAM, fontSize: 11, fontWeight: 600 }}>{fmtC(Math.round((cat.budget ?? 700) * (budgetRatio / 100)))}<span style={{ color: '#5a7a6a', fontWeight: 400 }}> /mois</span></span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', marginTop: 2 }}>
+                  <span style={{ color: ORANGE, fontSize: 12, fontWeight: 700 }}>Total budget mensuel</span>
+                  <span style={{ color: ORANGE, fontSize: 13, fontWeight: 700 }}>{fmtC(totals.budgetMensuel)}<span style={{ fontSize: 10, fontWeight: 400 }}> /mois</span></span>
+                </div>
+
+                {/* Mots-clés par thématique */}
+                <div style={{ color: '#5a7a6a', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 12, marginBottom: 6 }}>
+                  Mots-clés ({keywords.length} au total)
+                </div>
+                {categories.map(cat => {
+                  const catKws = keywords.filter(k => k.categoryId === cat.id);
+                  return (
+                    <div key={cat.id} style={{ marginBottom: 8 }}>
+                      <div style={{ color: ORANGE, fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{cat.name} <span style={{ color: '#5a7a6a', fontWeight: 400 }}>({catKws.length})</span></div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 6px' }}>
+                        {catKws.map(kw => (
+                          <span key={kw.id} style={{ color: '#a8c5b5', fontSize: 10, backgroundColor: G3, borderRadius: 3, padding: '1px 5px' }}>{kw.keyword}</span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Saisonnalité */}
                 {seasonalityEnabled && (
-                  <div style={{ marginTop: 8, padding: '6px 10px', backgroundColor: `${ORANGE}22`, borderRadius: 5, display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: ORANGE, fontSize: 11 }}>Saisonnalité</span>
-                    <span style={{ color: ORANGE, fontSize: 11, fontWeight: 600 }}>
-                      ×{highSeasonMultiplier} · démarrage {MONTH_NAMES[startMonth]}
-                    </span>
+                  <div style={{ marginTop: 8, padding: '6px 10px', backgroundColor: `${ORANGE}22`, borderRadius: 5 }}>
+                    <div style={{ color: '#5a7a6a', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Saisonnalité</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: ORANGE, fontSize: 11 }}>Multiplicateur haute saison</span>
+                      <span style={{ color: ORANGE, fontSize: 11, fontWeight: 600 }}>×{highSeasonMultiplier}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                      <span style={{ color: ORANGE, fontSize: 11 }}>Démarrage</span>
+                      <span style={{ color: ORANGE, fontSize: 11, fontWeight: 600 }}>{MONTH_NAMES[startMonth]}</span>
+                    </div>
+                    <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                      {MONTH_NAMES.map((m, i) => (
+                        <span key={i} style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, backgroundColor: highSeasonMonths[i] ? ORANGE : G3, color: highSeasonMonths[i] ? 'white' : '#5a7a6a' }}>{m.slice(0, 3)}</span>
+                      ))}
+                    </div>
                   </div>
                 )}
+
               </div>
 
               {/* Colonne droite : taux de conversion */}
@@ -1859,7 +2494,7 @@ export default function SimulateurSEO() {
                 </div>
                 {([
                   ['Transactionnel', `${crTransactionnel}%`, INTENT_COLOR[1]],
-                  ['Pré-achat',      `${crPreAchat}%`,       INTENT_COLOR[2]],
+                  ['Navigationnelle', `${crPreAchat}%`,       INTENT_COLOR[2]],
                   ['Commerciale',    `${crIntermediaire}%`,  INTENT_COLOR[3]],
                   ['Informationnel', `${crInformationnel}%`, INTENT_COLOR[4]],
                 ] as [string, string, string][]).map(([label, value, color]) => (
@@ -1892,6 +2527,15 @@ export default function SimulateurSEO() {
               </div>
 
             </div>
+          </div>
+
+          {/* DISCLAIMER — shown on the web version and captured in the PDF export */}
+          <div style={{
+            marginTop: 16, padding: '12px 16px', backgroundColor: G2,
+            border: `1px solid ${G3}`, borderRadius: 8,
+            color: '#5a7a6a', fontSize: 10, lineHeight: 1.5,
+          }}>
+            Cette simulation est indicative et non contractuelle. Elle repose sur des hypothèses estimatives et ne prend pas en compte certains facteurs externes pouvant impacter les résultats réels, notamment les actions médias, la politique tarifaire, la pression concurrentielle et les conditions commerciales. En e-commerce, les frais de port, remises et promotions peuvent fortement influencer la performance. En génération de leads, la rapidité de traitement, la qualité du suivi et l'efficacité de l'équipe commerciale ont également un impact direct sur les résultats.
           </div>
 
         </div>
