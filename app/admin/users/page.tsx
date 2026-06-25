@@ -16,6 +16,7 @@ interface User {
   createdAt: string; firstLoginAt?: string | null; lastLoginAt?: string | null;
   loginCount?: number; workspaceCount?: number;
   totalTimeSeconds?: number; interactionCount?: number;
+  status?: string;
 }
 
 function fmtDuration(totalSeconds: number) {
@@ -171,6 +172,15 @@ export default function UsersPage() {
     if (res.ok) setUsers(prev => prev.map(u => u.id === userId ? { ...u, isGlobalAdmin: !current } : u));
   };
 
+  const toggleDisabled = async (userId: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'disabled' ? 'active' : 'disabled';
+    const label = newStatus === 'disabled' ? 'Désactiver' : 'Réactiver';
+    const user = users.find(u => u.id === userId);
+    if (!confirm(`${label} le compte de "${user?.name || user?.email}" ?`)) return;
+    const res = await fetch('/api/users', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, status: newStatus }) });
+    if (res.ok) setUsers(prev => prev.map(u => u.id === userId ? { ...u, status: newStatus } : u));
+  };
+
   const deleteInvitation = async (invId: string, email: string) => {
     if (!confirm(`Supprimer l'invitation pour "${email}" ?`)) return;
     setDeletingInv(invId);
@@ -194,7 +204,8 @@ export default function UsersPage() {
       <div style={{ marginBottom: 28 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Utilisateurs</h1>
         <p style={{ color: '#7a9e8e', fontSize: 14 }}>
-          {users.length} compte{users.length !== 1 ? 's' : ''} actif{users.length !== 1 ? 's' : ''}
+          {users.filter(u => u.status !== 'disabled').length} compte{users.filter(u => u.status !== 'disabled').length !== 1 ? 's' : ''} actif{users.filter(u => u.status !== 'disabled').length !== 1 ? 's' : ''}
+          {users.filter(u => u.status === 'disabled').length > 0 && <span style={{ color: '#e05050' }}> · {users.filter(u => u.status === 'disabled').length} désactivé{users.filter(u => u.status === 'disabled').length > 1 ? 's' : ''}</span>}
           {pendingInvites.length > 0 && ` · ${pendingInvites.length} invitation${pendingInvites.length > 1 ? 's' : ''} en cours`}
         </p>
       </div>
@@ -280,24 +291,29 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Active users */}
+      {/* Users */}
       <div>
-        <h2 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7a9e8e' }}>Comptes actifs</h2>
+        <h2 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7a9e8e' }}>Comptes</h2>
         {users.length === 0 ? (
           <div style={{ backgroundColor: G5, borderRadius: 12, padding: '48px 32px', textAlign: 'center', color: '#7a9e8e', fontSize: 15, border: `1px solid ${G3}` }}>Aucun utilisateur.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 110px 64px 90px 90px 60px 90px 90px 90px', gap: 10, padding: '4px 16px', color: '#5a7a6a', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 110px 64px 90px 90px 60px 90px 90px 110px', gap: 10, padding: '4px 16px', color: '#5a7a6a', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
               <span>Nom</span><span>Email</span><span>Rôle</span><span>Espaces</span><span>1re cnx</span><span>Dernière cnx</span><span>Cnx</span><span title="Temps passé total dans le simulateur">Temps passé</span><span title="Nombre d'interactions (clics, saisies)">Interactions</span><span></span>
             </div>
-            {users.map(u => (
+            {users.map(u => {
+              const isDisabled = u.status === 'disabled';
+              return (
               <div key={u.id}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 110px 64px 90px 90px 60px 90px 90px 90px', gap: 10, alignItems: 'center', backgroundColor: G5, borderRadius: expandedUser === u.id ? '10px 10px 0 0' : 10, padding: '12px 16px', border: `1px solid ${expandedUser === u.id ? G4 : G3}` }}>
-                  <span style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name || <span style={{ color: '#5a7a6a', fontStyle: 'italic' }}>-</span>}</span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 110px 64px 90px 90px 60px 90px 90px 110px', gap: 10, alignItems: 'center', backgroundColor: isDisabled ? '#1a2e24' : G5, borderRadius: expandedUser === u.id ? '10px 10px 0 0' : 10, padding: '12px 16px', border: `1px solid ${isDisabled ? '#e0505044' : expandedUser === u.id ? G4 : G3}`, opacity: isDisabled ? 0.75 : 1 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {u.name || <span style={{ color: '#5a7a6a', fontStyle: 'italic' }}>-</span>}
+                    {isDisabled && <span style={{ backgroundColor: '#e0505022', color: '#e05050', border: '1px solid #e0505044', borderRadius: 4, padding: '1px 6px', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', flexShrink: 0 }}>Désactivé</span>}
+                  </span>
                   <span style={{ color: '#7a9e8e', fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.email}</span>
                   <span>
                     {u.id !== session?.user?.id ? (
-                      <button onClick={() => toggleAdmin(u.id, u.isGlobalAdmin)} style={{ backgroundColor: u.isGlobalAdmin ? ORANGE + '22' : G3, color: u.isGlobalAdmin ? ORANGE : '#7a9e8e', border: `1px solid ${u.isGlobalAdmin ? ORANGE + '44' : G4}`, borderRadius: 6, padding: '3px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                      <button onClick={() => !isDisabled && toggleAdmin(u.id, u.isGlobalAdmin)} disabled={isDisabled} style={{ backgroundColor: u.isGlobalAdmin ? ORANGE + '22' : G3, color: u.isGlobalAdmin ? ORANGE : '#7a9e8e', border: `1px solid ${u.isGlobalAdmin ? ORANGE + '44' : G4}`, borderRadius: 6, padding: '3px 10px', fontSize: 11, fontWeight: 700, cursor: isDisabled ? 'not-allowed' : 'pointer', opacity: isDisabled ? 0.5 : 1 }}>
                         {u.isGlobalAdmin ? 'Admin' : 'Utilisateur'}
                       </button>
                     ) : <span style={{ backgroundColor: ORANGE + '22', color: ORANGE, borderRadius: 6, padding: '3px 10px', fontSize: 11, fontWeight: 700 }}>Admin</span>}
@@ -310,9 +326,17 @@ export default function UsersPage() {
                   <span style={{ fontSize: 11, color: (u.loginCount ?? 0) > 0 ? '#7a9e8e' : '#5a7a6a', textAlign: 'center' }}>{u.loginCount ?? 0}</span>
                   <span style={{ fontSize: 11, color: (u.totalTimeSeconds ?? 0) > 0 ? '#7a9e8e' : '#5a7a6a' }}>{fmtDuration(u.totalTimeSeconds ?? 0)}</span>
                   <span style={{ fontSize: 11, color: (u.interactionCount ?? 0) > 0 ? '#7a9e8e' : '#5a7a6a', textAlign: 'center' }}>{u.interactionCount ?? 0}</span>
-                  <div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {u.id !== session?.user?.id && (
-                      <button onClick={() => deleteUser(u.id, u.name || u.email)} style={{ backgroundColor: 'transparent', border: '1px solid #e05050', borderRadius: 6, padding: '4px 10px', color: '#e05050', fontSize: 11, cursor: 'pointer' }}>Supprimer</button>
+                      <>
+                        <button
+                          onClick={() => toggleDisabled(u.id, u.status ?? 'active')}
+                          style={{ backgroundColor: isDisabled ? '#4caf7d22' : '#e0505022', border: `1px solid ${isDisabled ? '#4caf7d44' : '#e0505044'}`, borderRadius: 6, padding: '3px 8px', color: isDisabled ? '#4caf7d' : '#e05050', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          {isDisabled ? 'Réactiver' : 'Désactiver'}
+                        </button>
+                        <button onClick={() => deleteUser(u.id, u.name || u.email)} style={{ backgroundColor: 'transparent', border: '1px solid #e05050', borderRadius: 6, padding: '3px 8px', color: '#e05050', fontSize: 11, cursor: 'pointer' }}>Supprimer</button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -349,7 +373,7 @@ export default function UsersPage() {
                   </div>
                 )}
               </div>
-            ))}
+            ); })}
           </div>
         )}
       </div>

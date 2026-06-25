@@ -19,7 +19,8 @@ export async function GET() {
            u.first_login_at, u.last_login_at, u.login_count,
            COUNT(wm.workspace_id) as workspace_count,
            COALESCE(u.total_time_seconds, 0) as total_time_seconds,
-           COALESCE(u.interaction_count, 0) as interaction_count
+           COALESCE(u.interaction_count, 0) as interaction_count,
+           COALESCE(u.status, 'active') as status
     FROM users u
     LEFT JOIN workspace_members wm ON wm.user_id = u.id
     GROUP BY u.id
@@ -30,6 +31,7 @@ export async function GET() {
     firstLoginAt: r[5] ?? null, lastLoginAt: r[6] ?? null, loginCount: r[7] ?? 0,
     workspaceCount: Number(r[8]) ?? 0,
     totalTimeSeconds: Number(r[9]) || 0, interactionCount: Number(r[10]) || 0,
+    status: (r[11] as string) || 'active',
   })));
 }
 
@@ -65,14 +67,24 @@ export async function PATCH(req: NextRequest) {
   if (!session.user.isGlobalAdmin) return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
   await initDb();
 
-  const { userId, isGlobalAdmin } = await req.json();
+  const { userId, isGlobalAdmin, status } = await req.json();
   if (!userId) return NextResponse.json({ error: 'userId requis' }, { status: 400 });
-  if (userId === session.user.id) return NextResponse.json({ error: 'Impossible de modifier son propre rôle' }, { status: 400 });
+  if (userId === session.user.id) return NextResponse.json({ error: 'Impossible de modifier son propre compte' }, { status: 400 });
 
-  await db.execute({
-    sql: 'UPDATE users SET is_global_admin = ? WHERE id = ?',
-    args: [isGlobalAdmin ? 1 : 0, userId],
-  });
+  if (status !== undefined) {
+    if (status !== 'active' && status !== 'disabled') {
+      return NextResponse.json({ error: 'Statut invalide' }, { status: 400 });
+    }
+    await db.execute({
+      sql: 'UPDATE users SET status = ? WHERE id = ?',
+      args: [status, userId],
+    });
+  } else {
+    await db.execute({
+      sql: 'UPDATE users SET is_global_admin = ? WHERE id = ?',
+      args: [isGlobalAdmin ? 1 : 0, userId],
+    });
+  }
   return NextResponse.json({ ok: true });
 }
 

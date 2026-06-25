@@ -15,13 +15,14 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.email || !credentials?.password) return null;
         await initDb();
         const res = await db.execute({
-          sql: 'SELECT id, email, password_hash, name, is_global_admin FROM users WHERE email = ?',
+          sql: 'SELECT id, email, password_hash, name, is_global_admin, status FROM users WHERE email = ?',
           args: [credentials.email.toLowerCase().trim()],
         });
         if (!res.rows.length) return null;
         const row = res.rows[0];
         const valid = await bcrypt.compare(credentials.password, row[2] as string);
         if (!valid) return null;
+        if ((row[5] as string) === 'disabled') return null;
 
         const userId = row[0] as string;
         const now    = new Date().toISOString();
@@ -51,16 +52,18 @@ export const authOptions: NextAuthOptions = {
         token.isGlobalAdmin = user.isGlobalAdmin;
       }
 
-      // Recharge le statut admin depuis la base à chaque requête, pour que les changements
-      // de droits (ex : promotion admin) s'appliquent sans avoir à se reconnecter.
+      // Recharge le statut admin et disabled depuis la base à chaque requête.
       if (token.id) {
         await initDb();
         const adminRes = await db.execute({
-          sql: 'SELECT is_global_admin FROM users WHERE id = ?',
+          sql: 'SELECT is_global_admin, status FROM users WHERE id = ?',
           args: [token.id as string],
         });
         if (adminRes.rows.length) {
           token.isGlobalAdmin = Boolean(adminRes.rows[0][0]);
+          token.disabled      = (adminRes.rows[0][1] as string) === 'disabled';
+        } else {
+          token.disabled = true; // user deleted
         }
       }
 
@@ -84,6 +87,7 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       session.user.id            = token.id;
       session.user.isGlobalAdmin = token.isGlobalAdmin;
+      session.user.disabled      = token.disabled as boolean | undefined;
       return session;
     },
   },
