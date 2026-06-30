@@ -215,8 +215,8 @@ export default function RapportsPage() {
   }
 
   const cols = canMove
-    ? '20px 3fr 1.5fr 120px 44px 80px 70px 120px 120px 75px 72px 80px'
-    : '20px 3fr 1.5fr 120px 44px 80px 70px 120px 120px 92px 80px';
+    ? '20px 3fr 120px 44px 80px 70px 120px 120px 75px 72px 80px'
+    : '20px 3fr 120px 44px 80px 70px 120px 120px 92px 80px';
 
   return (
     <div style={{ maxWidth: 1300 }}>
@@ -267,7 +267,7 @@ export default function RapportsPage() {
         <div style={{ minWidth: 1050, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '8px 16px', color: '#7a9e8e', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
             <span></span>
-            <span>Prospect</span><span>Site</span><span>Espace client</span>
+            <span>Prospect</span><span>Espace client</span>
             <span title="Vues">Vues</span><span title="Temps passé total">Temps passé</span><span title="Nombre d'interactions (clics, saisies)">Interactions</span>
             <span>Dernière consult.</span><span>Création</span>
             {canMove && <span></span>}<span></span><span></span>
@@ -299,7 +299,6 @@ export default function RapportsPage() {
                   <span title={r.prospect || ''} style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {r.prospect || <span style={{ color: '#5a7a6a', fontStyle: 'italic' }}>Sans nom</span>}
                   </span>
-                  <span style={{ color: '#7a9e8e', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.siteUrl || '-'}</span>
                   <span style={{ fontSize: 12 }}>
                     {r.workspaceName
                       ? <span style={{ backgroundColor: G3, color: '#7a9e8e', borderRadius: 5, padding: '2px 8px', fontSize: 11, border: `1px solid ${G4}`, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', maxWidth: '100%' }}>{r.workspaceName}</span>
