@@ -215,11 +215,11 @@ export default function RapportsPage() {
   }
 
   const cols = canMove
-    ? '20px 2fr 1fr 140px 48px 90px 80px 130px 150px 80px 80px 80px'
-    : '20px 2fr 1fr 140px 48px 90px 80px 130px 150px 100px 80px';
+    ? '20px 3fr 1fr 140px 48px 90px 80px 130px 130px 80px 80px 80px'
+    : '20px 3fr 1fr 140px 48px 90px 80px 130px 130px 100px 80px';
 
   return (
-    <div style={{ maxWidth: 1100 }}>
+    <div style={{ maxWidth: 1300 }}>
       {/* Header */}
       <div style={{ marginBottom: 28 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Rapports enregistrés</h1>
