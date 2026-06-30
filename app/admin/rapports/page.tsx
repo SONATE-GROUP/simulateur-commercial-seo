@@ -88,7 +88,7 @@ function ViewersAccordion({ reportId }: { reportId: string }) {
 
   return (
     <div style={{ padding: '12px 20px 16px' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 90px 80px 160px', gap: 10, padding: '6px 0', marginBottom: 4, color: '#5a7a6a', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: `1px solid ${G3}` }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 90px 80px 160px', gap: 10, padding: '6px 0', marginBottom: 4, color: '#7a9e8e', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: `1px solid ${G3}` }}>
         <span>Utilisateur</span>
         <span style={{ textAlign: 'center' }}>Vues</span>
         <span>Temps passé</span>
@@ -102,16 +102,16 @@ function ViewersAccordion({ reportId }: { reportId: string }) {
             {v.name && v.email && <span style={{ color: '#5a7a6a', fontSize: 11 }}> · </span>}
             <span style={{ color: '#5a7a6a', fontSize: 11 }}>{v.email || ''}</span>
           </span>
-          <span style={{ fontSize: 12, fontWeight: 700, textAlign: 'center', color: v.viewCount > 0 ? '#4caf7d' : '#3a5c4e' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, textAlign: 'center', color: v.viewCount > 0 ? '#4caf7d' : '#5a7a6a' }}>
             {v.viewCount || '-'}
           </span>
-          <span style={{ fontSize: 12, color: v.timeSeconds > 0 ? '#7a9e8e' : '#3a5c4e' }}>
+          <span style={{ fontSize: 12, color: v.timeSeconds > 0 ? '#7a9e8e' : '#5a7a6a' }}>
             {fmtDuration(v.timeSeconds)}
           </span>
-          <span style={{ fontSize: 12, textAlign: 'center', color: v.interactions > 0 ? '#7a9e8e' : '#3a5c4e' }}>
+          <span style={{ fontSize: 12, textAlign: 'center', color: v.interactions > 0 ? '#7a9e8e' : '#5a7a6a' }}>
             {v.interactions > 0 ? v.interactions : '-'}
           </span>
-          <span style={{ fontSize: 11, color: '#5a7a6a' }}>
+          <span style={{ fontSize: 11, color: '#7a9e8e' }}>
             {v.lastViewed ? fmtDate(v.lastViewed) : '-'}
           </span>
         </div>
@@ -264,7 +264,7 @@ export default function RapportsPage() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, padding: '8px 16px', color: '#5a7a6a', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, padding: '8px 16px', color: '#7a9e8e', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
             <span></span>
             <span>Prospect</span><span>Site</span><span>Espace client</span>
             <span title="Vues">Vues</span><span title="Temps passé total">Temps passé</span><span title="Nombre d'interactions (clics, saisies)">Interactions</span>
@@ -304,13 +304,13 @@ export default function RapportsPage() {
                       ? <span style={{ backgroundColor: G3, color: '#7a9e8e', borderRadius: 5, padding: '2px 8px', fontSize: 11, border: `1px solid ${G4}`, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', maxWidth: '100%' }}>{r.workspaceName}</span>
                       : <span style={{ color: '#3a5c4e', fontSize: 11, fontStyle: 'italic' }}>-</span>}
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 700, textAlign: 'center', color: r.viewCount > 0 ? '#4caf7d' : '#3a5c4e' }} title={r.viewCount > 0 ? `${r.viewCount} consultation${r.viewCount > 1 ? 's' : ''}` : 'Jamais consulté'}>
+                  <span style={{ fontSize: 12, fontWeight: 700, textAlign: 'center', color: r.viewCount > 0 ? '#4caf7d' : '#5a7a6a' }} title={r.viewCount > 0 ? `${r.viewCount} consultation${r.viewCount > 1 ? 's' : ''}` : 'Jamais consulté'}>
                     {r.viewCount > 0 ? r.viewCount : '-'}
                   </span>
-                  <span style={{ fontSize: 11, color: r.totalTimeSeconds > 0 ? '#7a9e8e' : '#3a5c4e' }}>
+                  <span style={{ fontSize: 11, color: r.totalTimeSeconds > 0 ? '#7a9e8e' : '#5a7a6a' }}>
                     {fmtDuration(r.totalTimeSeconds)}
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'center', color: r.interactionCount > 0 ? '#7a9e8e' : '#3a5c4e' }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'center', color: r.interactionCount > 0 ? '#7a9e8e' : '#5a7a6a' }}>
                     {r.interactionCount > 0 ? r.interactionCount : '-'}
                   </span>
                   <span style={{ fontSize: 11 }}>
@@ -319,9 +319,9 @@ export default function RapportsPage() {
                         <span style={{ color: '#7a9e8e', display: 'block' }}>{fmtDate(r.lastViewedAt)}</span>
                         <span style={{ color: '#5a7a6a', fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', maxWidth: 120 }}>{r.lastViewerName || r.lastViewerEmail || ''}</span>
                       </span>
-                    ) : <span style={{ color: '#3a5c4e', fontStyle: 'italic' }}>Jamais consulté</span>}
+                    ) : <span style={{ color: '#5a7a6a', fontStyle: 'italic' }}>Jamais consulté</span>}
                   </span>
-                  <span style={{ color: '#5a7a6a', fontSize: 11 }}>{fmtDate(r.createdAt)}</span>
+                  <span style={{ color: '#7a9e8e', fontSize: 11 }}>{fmtDate(r.createdAt)}</span>
                   {canMove && (
                     <button onClick={() => openMoveModal(r)} style={{ backgroundColor: 'transparent', border: `1px solid ${G4}`, borderRadius: 6, padding: '5px 10px', color: '#7a9e8e', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                       Déplacer
