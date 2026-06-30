@@ -215,8 +215,8 @@ export default function RapportsPage() {
   }
 
   const cols = canMove
-    ? '20px 3fr 120px 44px 80px 70px 120px 120px 75px 72px 80px'
-    : '20px 3fr 120px 44px 80px 70px 120px 120px 92px 80px';
+    ? '20px 3fr 120px 44px 120px 75px 72px 80px'
+    : '20px 3fr 120px 44px 120px 92px 80px';
 
   return (
     <div style={{ maxWidth: 1300 }}>
@@ -268,8 +268,8 @@ export default function RapportsPage() {
           <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '8px 16px', color: '#7a9e8e', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', alignItems: 'end', wordBreak: 'break-word' }}>
             <span></span>
             <span>Prospect</span><span>Espace client</span>
-            <span title="Vues">Vues</span><span title="Temps passé total">Temps passé</span><span title="Nombre d'interactions (clics, saisies)">Interactions</span>
-            <span>Dernière consult.</span><span>Création</span>
+            <span title="Vues">Vues</span>
+            <span>Création</span>
             {canMove && <span></span>}<span></span><span></span>
           </div>
 
@@ -307,20 +307,6 @@ export default function RapportsPage() {
                   <span style={{ fontSize: 12, fontWeight: 700, textAlign: 'center', color: r.viewCount > 0 ? '#4caf7d' : '#5a7a6a' }} title={r.viewCount > 0 ? `${r.viewCount} consultation${r.viewCount > 1 ? 's' : ''}` : 'Jamais consulté'}>
                     {r.viewCount > 0 ? r.viewCount : '-'}
                   </span>
-                  <span style={{ fontSize: 11, color: r.totalTimeSeconds > 0 ? '#7a9e8e' : '#5a7a6a' }}>
-                    {fmtDuration(r.totalTimeSeconds)}
-                  </span>
-                  <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'center', color: r.interactionCount > 0 ? '#7a9e8e' : '#5a7a6a' }}>
-                    {r.interactionCount > 0 ? r.interactionCount : '-'}
-                  </span>
-                  <span style={{ fontSize: 11 }}>
-                    {r.lastViewedAt ? (
-                      <span title={r.lastViewerName || r.lastViewerEmail || ''}>
-                        <span style={{ color: '#7a9e8e', display: 'block' }}>{fmtDate(r.lastViewedAt)}</span>
-                        <span style={{ color: '#5a7a6a', fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', maxWidth: 120 }}>{r.lastViewerName || r.lastViewerEmail || ''}</span>
-                      </span>
-                    ) : <span style={{ color: '#5a7a6a', fontStyle: 'italic' }}>Jamais consulté</span>}
-                  </span>
                   <span style={{ color: '#7a9e8e', fontSize: 11 }}>{fmtDate(r.createdAt)}</span>
                   {canMove && (
                     <button onClick={() => openMoveModal(r)} style={{ backgroundColor: 'transparent', border: `1px solid ${G4}`, borderRadius: 6, padding: '5px 10px', color: '#7a9e8e', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>
@@ -338,6 +324,26 @@ export default function RapportsPage() {
                 {/* Accordion panel */}
                 {isOpen && (
                   <div style={{ borderTop: `1px solid ${G3}` }}>
+                    {/* Summary stats */}
+                    <div style={{ display: 'flex', gap: 32, padding: '12px 20px', borderBottom: `1px solid ${G3}` }}>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7a9e8e', marginBottom: 2 }}>Temps passé</div>
+                        <div style={{ fontSize: 13, color: r.totalTimeSeconds > 0 ? CREAM : '#5a7a6a' }}>{fmtDuration(r.totalTimeSeconds)}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7a9e8e', marginBottom: 2 }}>Interactions</div>
+                        <div style={{ fontSize: 13, color: r.interactionCount > 0 ? CREAM : '#5a7a6a' }}>{r.interactionCount > 0 ? r.interactionCount : '-'}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7a9e8e', marginBottom: 2 }}>Dernière consultation</div>
+                        {r.lastViewedAt ? (
+                          <div style={{ fontSize: 13, color: CREAM }}>
+                            {fmtDate(r.lastViewedAt)}
+                            {(r.lastViewerName || r.lastViewerEmail) && <span style={{ color: '#5a7a6a', fontSize: 11, marginLeft: 6 }}>{r.lastViewerName || r.lastViewerEmail}</span>}
+                          </div>
+                        ) : <div style={{ fontSize: 13, color: '#5a7a6a', fontStyle: 'italic' }}>Jamais consulté</div>}
+                      </div>
+                    </div>
                     <ViewersAccordion reportId={r.id} />
                   </div>
                 )}
